@@ -1,8 +1,10 @@
 [ignore]
 .*/node_modules/documentation/*
 .*/node_modules/.staging/*
+.*/blockstack.js/*
 
 [include]
+../blockstack.js
 
 [libs]
 
