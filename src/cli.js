@@ -14,445 +14,26 @@ Promise.onPossiblyUnhandledRejection(function(error){
     throw error;
 });
 
+import {
+  getCLIOpts,
+  printUsage,
+  checkArgs,
+  loadConfig,
+  DEFAULT_CONFIG_PATH,
+  DEFAULT_CONFIG_REGTEST_PATH 
+} from './argparse';
+
+import {
+  CLIRegtestNetworkAdapter,
+  getNetwork
+} from './network';
+
 // global CLI options
 let txOnly = false;
 let estimateOnly = false;
 let safetyChecks = true;
 
 const BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
-
-const NAME_PATTERN = 
-  '^([0-9a-z_.+-]{3,37})$'
-
-const NAMESPACE_PATTERN = 
-  '^([0-9a-z_-]{1,19})$'
-
-const ADDRESS_PATTERN = 
-  '^([123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,35})$';
-
-const PRIVATE_KEY_PATTERN = 
-  '^([0-9a-f]{64,66})$'
-
-// CLI usage
-const CLI_ARGS = {
-  lookup: {
-    type: "array",
-    items: {
-      type: "string",
-      pattern: NAME_PATTERN
-    },
-    minItems: 1,
-    maxItems: 1,
-  },
-  names: {
-    type: "array",
-    items: {
-      type: "string",
-      pattern: ADDRESS_PATTERN,
-    },
-    minItems: 1,
-    maxItems: 1,
-  },
-  namespace_preorder: {
-    type: 'array',
-    items: [
-      {
-        type: 'string',
-        pattern: NAMESPACE_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 3,
-    maxItems: 3,
-  },
-  namespace_reveal: {
-    type: 'array',
-    items: [
-      {
-        type: 'string',
-        pattern: NAMESPACE_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        // version
-        type: 'integer',
-        minimum: 0,
-        maximum: 2**16 - 1,
-      },
-      {
-        // lifetime
-        type: 'integer',
-        minimum: 0,
-        maximum: 2**32 - 1,
-      },
-      {
-        // coeff
-        type: 'integer',
-        minimum: 0,
-        maximum: 255,
-      },
-      {
-        // base
-        type: 'integer',
-        minimum: 0,
-        maximum: 255,
-      },
-      {
-        // buckets
-        type: 'string',
-        pattern: '^([0-9]{1,2},){15}[0-9]{1,2}$'
-      },
-      {
-        // non-alpha discount
-        type: 'string',
-        minimum: 0,
-        maximum: 15
-      },
-      {
-        // no-vowel discount
-        type: 'string',
-        minimum: 0,
-        maximum: 15,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 10,
-    maxItems: 10,
-  },
-  namespace_ready: {
-    type: 'array',
-    items: [
-      {
-        type: 'string',
-        pattern: NAMESPACE_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 2,
-    maxItems: 2,
-  },
-  preorder: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN
-      },
-    ],
-    minItems: 3,
-    maxItems: 3,
-  },
-  price: {
-    type: "array",
-    items: {
-      type: "string",
-      pattern: NAME_PATTERN,
-    },
-    minItems: 3,
-    maxItems: 3,
-  },
-  register: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        type: 'string',
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 4,
-    maxItems: 4,
-  },
-  renew: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        type: 'string',
-      },
-    ],
-    minItems: 3,
-    maxItems: 5,
-  },
-  revoke: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 3,
-    maxItems: 3,
-  },
-  transfer: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: ADDRESS_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 4,
-    maxItems: 4,
-  },
-  update: {
-    type: "array",
-    items: [
-      {
-        type: 'string',
-        pattern: NAME_PATTERN,
-      },
-      {
-        type: 'string',
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-      {
-        type: 'string',
-        pattern: PRIVATE_KEY_PATTERN,
-      },
-    ],
-    minItems: 4,
-    maxItems: 4,
-  },
-  whois: {
-    type: "array",
-    items: {
-      type: "string",
-      pattern: NAME_PATTERN
-    },
-    minItems: 4,
-    maxItems: 4
-  },
-};
-
-// usage string
-const USAGE = `Usage: ${process.argv[0]} [options] command [command arguments]
-Options can be:
-    -e                  Estimate the BTC cost of an operation (in satoshis).
-                        Do not generate or send any transactions.
-    -t                  Use integration test framework
-    -U                  Unsafe mode.  No safety checks will be performed.
-    -x                  Do not broadcast a transaction.  Only generate and
-                        print them.
-   
-Command can be:
-    lookup NAME         Look up a name's profile
-    names ADDR          List all names owned by an address
-    namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
-                        Preorder a namespace.  EXPENSIVE!
-    namespace_reveal NAMESPACE REVEAL_ADDR VERSION LIFETIME COEFF BASE
-      BUCKET_CSV NONALPHA_DISCOUNT NOVOWEL_DISCOUNT PAYMENT_KEY
-                        Reveal a namespace with the given parameters
-    namespace_ready NAMESPACE REVEAL_KEY
-                        Launch a revealed namespace
-    preorder NAME ADDR PAYMENT_KEY
-                        Preorder a name to a given address
-    price NAME          Find out how much a name costs
-    register NAME ADDR NEW_ZONEFILE PAYMENT_KEY
-                        Register a name to a given address, and
-                        give it its first zone file
-    revoke NAME OWNER_KEY PAYMENT_KEY
-                        Revoke a name
-    renew NAME OWNER_KEY PAYMENT_KEY [NEW_ADDR [NEW_ZONEFILE]]
-                        Renew a name, optionally sending it to a new
-                        address and giving it a new zone file
-    transfer NAME NEW_ADDR OWNER_KEY PAYMENT_KEY
-                        Transfer a name to a new address
-    update NAME ZONEFILE OWNER_KEY PAYMENT_KEY
-                        Update a name's zone file
-    whois NAME          Get basic name information for a Blockstack ID
-`;
-
-/*
- * Implement just enough getopt(3) to be useful.
- * Only handles short options.
- * Returns an object whose keys are option flags that map to true/false,
- * or to a value.
- * The key _ is mapped to the non-opts list.
- */
-function getCLIOpts(argv: Array<string>, opts: string) : Object {
-  let optsTable = {};
-  let remainingArgv = [];
-  let argvBuff = argv.slice(0);
-
-  for (let i = 0; i < opts.length; i++) {
-    if (opts[i] == ':') {
-      continue;
-    }
-    if (i+1 < opts.length && opts[i+1] == ':') {
-      optsTable[opts[i]] = null;
-    }
-    else {
-      optsTable[opts[i]] = false;
-    }
-  }
-
-  for (let opt of Object.keys(optsTable)) {
-    for (let i = 0; i < argvBuff.length; i++) {
-      if (argvBuff[i] === null) {
-        break;
-      }
-      if (argvBuff[i] === '--') {
-        break;
-      }
-
-      const argvOpt = `-${opt}`;
-      if (argvOpt === argvBuff[i]) {
-        if (optsTable[opt] === false) {
-          // boolean switch
-          optsTable[opt] = true;
-          argvBuff[i] = '';
-        }
-        else {
-          // argument
-          optsTable[opt] = argvBuff[i+1];
-          argvBuff[i] = '';
-          argvBuff[i+1] = '';
-        }
-      }
-    }
-  }
-
-  for (let i = 0; i < argvBuff.length; i++) {
-    if (argvBuff[i].length > 0) {
-      if (argvBuff[i] === '--') {
-        continue;
-      }
-      remainingArgv.push(argvBuff[i])
-    }
-  }
-
-  optsTable['_'] = remainingArgv;
-  return optsTable;
-}
-
-
-/*
- * Check command args
- */
-type checkArgsSuccessType = {
-  'success': true,
-  'command': string,
-  'args': Array<string>
-};
-
-type checkArgsFailType = {
-  'success': false,
-  'error': string,
-  'usage': boolean
-};
-
-function checkArgs(argList: Array<string>) 
-  : checkArgsSuccessType | checkArgsFailType {
-  if (argList.length <= 2) {
-     return {
-       'success': false,
-       'error': 'No command given',
-       'usage': true
-     }
-  }
-
-  const commandName = argList[2];
-  const commandArgs = argList.slice(3);
-
-  if (!CLI_ARGS.hasOwnProperty(commandName)) {
-     return {
-       'success': false,
-       'error': `Unrecognized command '${commandName}'`,
-       'usage': true
-     };
-  }
-
-  const commands = {commandName: commandArgs};
-  const ajv = Ajv();
-  const valid = ajv.validate(CLI_ARGS, commands);
-  if (!valid) {
-     return {
-       'success': false,
-       'error': 'Invalid command arguments',
-       'usage': true
-     };
-  }
-
-  return {
-    'success': true, 
-    'command': commandName, 
-    'args': commandArgs
-  };
-}
 
 /*
  * Get a private key's address.  Honor the 01 to compress the public key
@@ -600,7 +181,7 @@ function preorder(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -608,7 +189,10 @@ function preorder(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -688,7 +272,7 @@ function register(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -696,7 +280,10 @@ function register(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -777,7 +364,7 @@ function update(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -785,7 +372,10 @@ function update(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -795,14 +385,16 @@ function update(network: Object, args: Array<string>) {
  * args:
  * @name (string) the name to transfer
  * @address (string) the new owner address
+ * @keepZoneFile (boolean) keep the zone file or not
  * @ownerKey (string) the owner private key
  * @paymentKey (string) the payment private key
  */
 function transfer(network: Object, args: Array<string>) {
   const name = args[0];
   const address = args[1];
-  const ownerKey = args[2];
-  const paymentKey = args[3];
+  const keepZoneFile = (args[2].toLowerCase() === 'true');
+  const ownerKey = args[3];
+  const paymentKey = args[4];
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
@@ -822,7 +414,7 @@ function transfer(network: Object, args: Array<string>) {
       });
 
   const txPromise = blockstack.transactions.makeTransfer(
-    name, address, ownerKey, paymentKey);
+    name, address, ownerKey, paymentKey, keepZoneFile);
 
   if (estimateOnly) {
     return estimatePromise;
@@ -871,7 +463,7 @@ function transfer(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -879,7 +471,10 @@ function transfer(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -929,8 +524,32 @@ function renew(network: Object, args: Array<string>) {
           numOwnerUTXOs + numPaymentUTXOs - 1);
       });
 
-  const txPromise = blockstack.transactions.makeRenewal(
-    name, newAddress, ownerKey, paymentKey, zonefile);
+  const zonefilePromise = new Promise((resolve) => {
+    if (!!zonefile) {
+      resolve(zonefile);
+    } else {
+      return network.getNameInfo(name)
+        .then((nameInfo) => {
+          if (!!nameInfo.zonefile_hash) {
+            return network.getZonefile(nameInfo.value_hash)
+              .then((zonefileData) => {
+                resolve(zonefileData);
+              });
+          } else {
+            // give an empty zonefile 
+            resolve(null);
+          };
+        });
+    }
+  })
+  .catch((e) => {
+    console.error(e);
+  });
+
+  const txPromise = zonefilePromise.then((zonefileData) => {
+    return blockstack.transactions.makeRenewal(
+      name, newAddress, ownerKey, paymentKey, zonefileData);
+  });
 
   if (estimateOnly) {
     return estimatePromise;
@@ -976,7 +595,7 @@ function renew(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -984,7 +603,10 @@ function renew(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -1052,7 +674,7 @@ function revoke(network: Object, args: Array<string>) {
       else {
         return {
           'status': false,
-          'error': 'Name cannot be safely updated',
+          'error': 'Name cannot be safely revoked',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'isInGracePeriod': isInGracePeriod
@@ -1063,7 +685,7 @@ function revoke(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -1071,7 +693,10 @@ function revoke(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -1153,7 +778,7 @@ function namespacePreorder(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -1161,7 +786,10 @@ function namespacePreorder(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -1247,6 +875,7 @@ function namespaceReveal(network: Object, args: Array<string>) {
     ])
     .then(([isNamespaceValid, isNamespaceAvailable,
             paymentBalance, estimate]) => {
+
       if (isNamespaceValid && isNamespaceAvailable && 
           paymentBalance >= estimate) {
         return {'status': true};
@@ -1266,7 +895,7 @@ function namespaceReveal(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -1274,7 +903,10 @@ function namespaceReveal(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -1298,7 +930,7 @@ function namespaceReady(network: Object, args: Array<string>) {
   const estimatePromise = revealUTXOsPromise.then((utxos) => {
         const numUTXOs = utxos.length;
         return blockstack.transactions.estimateNamespaceReady(
-          namespaceID, network.coerceAddress(revealAddress), numUTXOs);
+          namespaceID, numUTXOs);
       });
 
   if (estimateOnly) {
@@ -1337,10 +969,10 @@ function namespaceReady(network: Object, args: Array<string>) {
       else {
         return {
           'status': false,
-          'error': 'Name cannot be safely launched',
+          'error': 'Namespace cannot be safely launched',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceReady': isNamespaceReady,
-          'isRevealer': isRevealer,
+          'isPrivateKeyRevealer': isRevealer,
           'revealerBalance': revealerBalance,
           'estimateCost': estimate
         };
@@ -1350,7 +982,7 @@ function namespaceReady(network: Object, args: Array<string>) {
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        throw new Error(JSON.stringify(safetyChecksResult));
+        return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
       if (txOnly) {
@@ -1358,7 +990,10 @@ function namespaceReady(network: Object, args: Array<string>) {
       }
 
       return txPromise.then((tx) => {
-        network.broadcastTransaction(tx);
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
       });
     });
 }
@@ -1387,13 +1022,13 @@ const COMMANDS = {
  */
 export function CLIMain() {
   const argv = process.argv;
-  const opts = getCLIOpts(argv, 'txeU');
+  const opts = getCLIOpts(argv);
 
   const cmdArgs = checkArgs(opts._);
   if (!cmdArgs.success) {
     console.error(cmdArgs.error);
     if (cmdArgs.usage) {
-      console.error(USAGE);
+      printUsage();
     }
     process.exit(1);
   }
@@ -1401,15 +1036,23 @@ export function CLIMain() {
     txOnly = opts['x'];
     estimateOnly = opts['e'];
     safetyChecks = !opts['U'];
+    const consensusHash = opts['C'];
     const testnet = opts['t'];
+    const configPath = opts['c'] ? opts['c'] : 
+      (testnet ? DEFAULT_CONFIG_REGTEST_PATH : DEFAULT_CONFIG_PATH);
+    const namespaceBurnAddr = opts['B'];
+    const feeRate = opts['F'];
 
-    const blockstackNetwork = (BLOCKSTACK_TEST || testnet) ? 
-      blockstack.network.defaults.LOCAL_REGTEST : 
-      blockstack.network.defaults.MAINNET_DEFAULT;
+    const configData = loadConfig(configPath, testnet);
+    let blockstackNetwork = getNetwork(configData, (BLOCKSTACK_TEST || testnet));
+    if (BLOCKSTACK_TEST || testnet) {
+      // wrap command-line options
+      blockstackNetwork = new CLIRegtestNetworkAdapter(
+        blockstackNetwork, consensusHash, feeRate, namespaceBurnAddr);
+    }
 
     blockstack.config.network = blockstackNetwork;
 
-    console.log(opts);
     const method = COMMANDS[cmdArgs.command];
     method(blockstackNetwork, cmdArgs.args)
     .then((result) => console.log(result))
