@@ -20,6 +20,8 @@ const PRIVATE_KEY_PATTERN =
 
 const INT_PATTERN = '^[0-9]+$'
 
+const ZONEFILE_HASH_PATTERN = '^([0-9a-f]{40})$'
+
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
@@ -186,14 +188,18 @@ const CLI_ARGS = {
         },
         {
           type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
         },
         {
           type: 'string',
-          pattern: PRIVATE_KEY_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: ZONEFILE_HASH_PATTERN,
         },
       ],
-      minItems: 4,
-      maxItems: 4,
+      minItems: 3,
+      maxItems: 5,
     },
     renew: {
       type: "array",
@@ -217,9 +223,13 @@ const CLI_ARGS = {
         {
           type: 'string',
         },
+        {
+          type: 'string',
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
       ],
       minItems: 3,
-      maxItems: 5,
+      maxItems: 6,
     },
     revoke: {
       type: "array",
@@ -285,9 +295,13 @@ const CLI_ARGS = {
           type: 'string',
           pattern: PRIVATE_KEY_PATTERN,
         },
+        {
+          type: 'string',
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
       ],
       minItems: 4,
-      maxItems: 4,
+      maxItems: 5,
     },
     whois: {
       type: "array",
@@ -304,7 +318,7 @@ const CLI_ARGS = {
 };
 
 // usage string
-const USAGE = `Usage: ${process.argv[0]} [options] command [command arguments]
+const USAGE = `Usage: ${process.argv[1]} [options] command [command arguments]
 Options can be:
     -c                  Path to a config file (defaults to ${DEFAULT_CONFIG_PATH})
     -e                  Estimate the BTC cost of an operation (in satoshis).
@@ -320,7 +334,7 @@ Options can be:
     -B BURN_ADDR        Use the given namespace burn address instead of the one
                         obtained from the Bitcoin network (requires -t)
 Command can be:
-    lookup NAME         Look up a name's profile
+    lookup NAME         Look up a name's profile and zonefile
     names ADDR          List all names owned by an address
     namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
                         Preorder a namespace.  EXPENSIVE!
@@ -332,18 +346,21 @@ Command can be:
     preorder NAME ADDR PAYMENT_KEY
                         Preorder a name to a given address
     price NAME          Find out how much a name costs
-    register NAME ADDR NEW_ZONEFILE PAYMENT_KEY
-                        Register a name to a given address, and
-                        give it its first zone file
+    register NAME ADDR PAYMENT_KEY [NEW_ZONEFILE [ZONEFILE_HASH]]
+                        Register a name to a given address, and optionally
+                        give it its first zone file.  If ZONEFILE_HASH is given,
+                        then NEW_ZONEFILE will be ignored.
     revoke NAME OWNER_KEY PAYMENT_KEY
                         Revoke a name
-    renew NAME OWNER_KEY PAYMENT_KEY [NEW_ADDR [NEW_ZONEFILE]]
+    renew NAME OWNER_KEY PAYMENT_KEY [NEW_ADDR [NEW_ZONEFILE [NEW_ZONEFILE_HASH]]]
                         Renew a name, optionally sending it to a new
-                        address and giving it a new zone file
+                        address and giving it a new zone file.  If NEW_ZONEFILE_HASH
+                        is given, then NEW_ZONEFILE will be ignored.
     transfer NAME NEW_ADDR KEEP_ZONEFILE OWNER_KEY PAYMENT_KEY
                         Transfer a name to a new address
-    update NAME ZONEFILE OWNER_KEY PAYMENT_KEY
-                        Update a name's zone file
+    update NAME ZONEFILE OWNER_KEY PAYMENT_KEY [ZONEFILE_HASH]
+                        Update a name's zone file.  If ZONEFILE_HASH is given, ZONEFILE
+                        will be ignored.
     whois NAME          Get basic name information for a Blockstack ID
 `;
 
