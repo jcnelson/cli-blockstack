@@ -44,6 +44,20 @@ export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
     }
     return super.getNamespaceBurnAddress(namespaceID);
   }
+
+  getZonefile(zonefileHash: string) {
+    return super.getZonefile(zonefileHash)
+      .then((zonefile) => zonefile)
+      .catch((e) => {
+        if (e.message === 'Bad response status: 404') {
+          // make 404's return null
+          return null;
+        }
+        else {
+          throw e;
+        }
+      });
+  }
 }
 
 /*
