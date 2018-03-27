@@ -165,7 +165,7 @@ function preorder(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Name cannot be safely preordered',
           'isNameValid': isNameValid,
@@ -174,7 +174,7 @@ function preorder(network: Object, args: Array<string>) {
           'isInGracePeriod': isInGracePeriod,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate
-        };
+        });
       }
     });
 
@@ -202,14 +202,28 @@ function preorder(network: Object, args: Array<string>) {
  * args:
  * @name (string) the name to register
  * @address (string) the address that owns this name
- * @zonefile (string) the zone file text to use
  * @paymentKey (string) the payment private key
+ * @zonefile (string) if given, the zone file text to use
+ * @zonefileHash (string) if given, this is the raw zone file hash to use
+ *  (in which case, @zonefile will be ignored)
  */
 function register(network: Object, args: Array<string>) {
   const name = args[0];
   const address = args[1];
-  const zonefile = args[2];
-  const paymentKey = args[3];
+  const paymentKey = args[2];
+  let zonefile = null;
+  let zonefileHash = null;
+
+  if (args.length > 3) {
+    zonefile = args[3];
+  }
+
+  if (args.length > 4) {
+    zonefileHash = args[4];
+    zonefile = null;
+
+    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+  }
 
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
   const paymentUTXOsPromise = network.getUTXOs(paymentAddress);
@@ -222,7 +236,7 @@ function register(network: Object, args: Array<string>) {
       });
 
   const txPromise = blockstack.transactions.makeRegister(
-    name, address, paymentKey, zonefile);
+    name, address, paymentKey, zonefile, zonefileHash);
 
   if (estimateOnly) {
     return estimatePromise;
@@ -258,14 +272,14 @@ function register(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Name cannot be safely registered',
           'isNameValid': isNameValid,
           'isNameAvailable': isNameAvailable,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod
-        };
+        });
       }
     });
   
@@ -295,12 +309,21 @@ function register(network: Object, args: Array<string>) {
  * @zonefile (string) the zonefile text to use
  * @ownerKey (string) the owner private key
  * @paymentKey (string) the payment private key
+ * @zonefileHash (string) the zone file hash to use, if given
+ *   (will be used instead of the zonefile)
  */
 function update(network: Object, args: Array<string>) {
   const name = args[0];
-  const zonefile = args[1];
+  let zonefile = args[1];
   const ownerKey = args[2];
   const paymentKey = args[3];
+  let zonefileHash = null;
+  if (args.length > 4) {
+    zonefileHash = args[4];
+    zonefile = null;
+    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+  }
+
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
@@ -319,7 +342,7 @@ function update(network: Object, args: Array<string>) {
       });
 
   const txPromise = blockstack.transactions.makeUpdate(
-    name, ownerKey, paymentKey, zonefile);
+    name, ownerKey, paymentKey, zonefile, zonefileHash);
 
   if (estimateOnly) {
     return estimatePromise;
@@ -351,13 +374,13 @@ function update(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Name cannot be safely updated',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'isInGracePeriod': isInGracePeriod
-        };
+        });
       }
     });
 
@@ -449,14 +472,14 @@ function transfer(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Name cannot be safely transferred',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod
-        };
+        });
       }
     });
 
@@ -487,6 +510,7 @@ function transfer(network: Object, args: Array<string>) {
  * @paymentKey (string) the payment private key 
  * @address (string) OPTIONAL: the new owner address
  * @zonefile (string) OPTIONAL: the new zone file
+ * @zonefileHash (string) OPTINOAL: use the given zonefile hash.  Supercedes zonefile.
  */
 function renew(network: Object, args: Array<string>) {
   const name = args[0];
@@ -497,16 +521,23 @@ function renew(network: Object, args: Array<string>) {
 
   let newAddress = null;
   let zonefile = null;
+  let zonefileHash = null;
 
-  if (args.length == 3) {
+  if (args.length <= 3) {
     newAddress = getPrivateKeyAddress(network, ownerKey);
   }
   else {
     newAddress = args[3];
   }
 
-  if (args.length == 5) {
+  if (args.length <= 5) {
     zonefile = args[4];
+  }
+
+  if (args.length <= 6) {
+    zonefileHash = args[5];
+    zonefile = null;
+    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
   }
 
   const ownerUTXOsPromise = network.getUTXOs(ownerAddress);
@@ -527,11 +558,14 @@ function renew(network: Object, args: Array<string>) {
   const zonefilePromise = new Promise((resolve) => {
     if (!!zonefile) {
       resolve(zonefile);
+    } else if (!!zonefileHash) {
+      // already have the hash 
+      resolve(null);
     } else {
       return network.getNameInfo(name)
         .then((nameInfo) => {
           if (!!nameInfo.zonefile_hash) {
-            return network.getZonefile(nameInfo.value_hash)
+            return network.getZonefile(nameInfo.zonefile_hash)
               .then((zonefileData) => {
                 resolve(zonefileData);
               });
@@ -548,7 +582,7 @@ function renew(network: Object, args: Array<string>) {
 
   const txPromise = zonefilePromise.then((zonefileData) => {
     return blockstack.transactions.makeRenewal(
-      name, newAddress, ownerKey, paymentKey, zonefileData);
+      name, newAddress, ownerKey, paymentKey, zonefileData, zonefileHash);
   });
 
   if (estimateOnly) {
@@ -582,13 +616,13 @@ function renew(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
-          'error': 'Name cannot be safely transferred',
+          'error': 'Name cannot be safely renewed',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'addressCanReceiveName': addressCanReceiveName
-        };
+        });
       }
     });
 
@@ -672,13 +706,13 @@ function revoke(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Name cannot be safely revoked',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'isInGracePeriod': isInGracePeriod
-        };
+        });
       }
     });
 
@@ -764,14 +798,14 @@ function namespacePreorder(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Namespace cannot be safely preordered',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate,
-        };
+        });
       }
     });
 
@@ -881,14 +915,14 @@ function namespaceReveal(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Namespace cannot be safely revealed',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate,
-        };
+        });
       }
     });
   
@@ -967,7 +1001,7 @@ function namespaceReady(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        return {
+        throw new Error({
           'status': false,
           'error': 'Namespace cannot be safely launched',
           'isNamespaceValid': isNamespaceValid,
@@ -975,7 +1009,7 @@ function namespaceReady(network: Object, args: Array<string>) {
           'isPrivateKeyRevealer': isRevealer,
           'revealerBalance': revealerBalance,
           'estimateCost': estimate
-        };
+        });
       }
     });
 
@@ -1059,6 +1093,7 @@ export function CLIMain() {
     .then(() => process.exit(0))
     .catch((e) => {
        console.error(e);
+       process.exit(1);
      });
   }
 }
