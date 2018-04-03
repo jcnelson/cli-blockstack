@@ -6,21 +6,26 @@ const process = require('process');
 import os from 'os'
 import fs from 'fs'
 
-const NAME_PATTERN = 
+export const NAME_PATTERN = 
   '^([0-9a-z_.+-]{3,37})$'
 
-const NAMESPACE_PATTERN = 
+export const NAMESPACE_PATTERN = 
   '^([0-9a-z_-]{1,19})$'
 
-const ADDRESS_PATTERN = 
+export const ADDRESS_PATTERN = 
   '^([123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,35})$';
 
-const PRIVATE_KEY_PATTERN = 
+export const PRIVATE_KEY_PATTERN = 
   '^([0-9a-f]{64,66})$'
 
-const INT_PATTERN = '^[0-9]+$'
+export const PUBLIC_KEY_PATTERN = 
+  '^([0-9a-f]{66,130})$'
 
-const ZONEFILE_HASH_PATTERN = '^([0-9a-f]{40})$'
+export const INT_PATTERN = '^[0-9]+$'
+
+export const ZONEFILE_HASH_PATTERN = '^([0-9a-f]{40})$'
+
+export const URL_PATTERN = "^http[s]?://.+$"
 
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
@@ -41,6 +46,57 @@ export const DEFAULT_CONFIG_REGTEST_PATH = '~/.blockstack-cli-regtest.conf'
 const CLI_ARGS = {
   type: 'object',
   properties: {
+    announce: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+      ],
+      minItems: 2,
+      maxItems: 2,
+    },
+    get_name_blockchain_record: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: NAME_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 1,
+    },
+    get_name_blockchain_history: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: NAME_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 3,
+    },
+    get_namespace_blockchain_record: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: NAMESPACE_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 1,
+    },
+    get_name_zonefile: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: NAME_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 1,
+    },
     lookup: {
       type: "array",
       items: {
@@ -58,6 +114,29 @@ const CLI_ARGS = {
       },
       minItems: 1,
       maxItems: 1,
+    },
+    name_import: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+          pattern: NAME_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+      ],
+      minItems: 4,
+      maxItems: 4
     },
     namespace_preorder: {
       type: 'array',
@@ -172,8 +251,50 @@ const CLI_ARGS = {
         type: "string",
         pattern: NAME_PATTERN,
       },
-      minItems: 3,
-      maxItems: 3,
+      minItems: 1,
+      maxItems: 1,
+    },
+    profile_sign: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+        },
+        {
+          type: "string",
+          pattern: PRIVATE_KEY_PATTERN
+        }
+      ],
+      minItems: 2,
+      maxItems: 2,
+    },
+    profile_store: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+          pattern: NAME_PATTERN
+        },
+        {
+          type: "string",
+        },
+        {
+          type: "string",
+          pattern: PRIVATE_KEY_PATTERN
+        },
+      ],
+    },
+    profile_verify: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+        },
+        {
+          type: "string",
+          pattern: `${ADDRESS_PATTERN}|${PUBLIC_KEY_PATTERN}`
+        }
+      ]
     },
     register: {
       type: "array",
@@ -285,7 +406,7 @@ const CLI_ARGS = {
           pattern: NAME_PATTERN,
         },
         {
-          type: 'string',
+          type: 'string'
         },
         {
           type: 'string',
@@ -309,8 +430,16 @@ const CLI_ARGS = {
         type: "string",
         pattern: NAME_PATTERN
       },
-      minItems: 4,
-      maxItems: 4
+      minItems: 1,
+      maxItems: 1
+    },
+    zonefile_push: {
+      type: "array",
+      items: {
+        type: "string"
+      },
+      minItems: 1,
+      maxItems: 1
     },
   },
   additionalProperties: false,
@@ -333,9 +462,22 @@ Options can be:
                         obtained from the Bitcoin network (requires -t)
     -B BURN_ADDR        Use the given namespace burn address instead of the one
                         obtained from the Bitcoin network (requires -t)
-Command can be:
+Command reference
+  Querying names
     lookup NAME         Look up a name's profile and zonefile
+    whois NAME          Get basic name and zonefile information for a Blockstack ID
+
+
+  Querying the blockchain
+    get_name_blockchain_record NAME
+                        Get the full on-chain record for a name
+    get_name_blockchain_history NAME [START_BLOCK [END_BLOCK]]
+                        Get the history of operations for a name
+    price NAME          Find out how much a name costs
     names ADDR          List all names owned by an address
+
+
+  Creating namespaces
     namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
                         Preorder a namespace.  EXPENSIVE!
     namespace_reveal NAMESPACE REVEAL_ADDR VERSION LIFETIME COEFF BASE
@@ -343,9 +485,22 @@ Command can be:
                         Reveal a namespace with the given parameters
     namespace_ready NAMESPACE REVEAL_KEY
                         Launch a revealed namespace
+    name_import NAME RECIPIENT_ADDR ZONEFILE_HASH IMPORT_KEY
+                        Import a name into a namespace
+
+
+  Peer services
+    announce MESSAGE_HASH PRIVATE_KEY
+                        Broadcast a message on the blockchain for subscribers to read
+    get_name_zonefile NAME
+                        Get a name's raw zonefile
+    zonefile_push ZONEFILE_DATA_OR_PATH
+                        Push an already-announced zone file to the Atlas network
+
+
+  Name management
     preorder NAME ADDR PAYMENT_KEY
                         Preorder a name to a given address
-    price NAME          Find out how much a name costs
     register NAME ADDR PAYMENT_KEY [NEW_ZONEFILE [ZONEFILE_HASH]]
                         Register a name to a given address, and optionally
                         give it its first zone file.  If ZONEFILE_HASH is given,
@@ -361,7 +516,15 @@ Command can be:
     update NAME ZONEFILE OWNER_KEY PAYMENT_KEY [ZONEFILE_HASH]
                         Update a name's zone file.  If ZONEFILE_HASH is given, ZONEFILE
                         will be ignored.
-    whois NAME          Get basic name information for a Blockstack ID
+
+
+  Profile management
+    profile_sign PATH PRIVATE_KEY
+                        Sign profile JSON with a given key.
+    profile_store NAME PATH PRIVATE_KEY
+                        Store a signed profile to a name's Gaia hub
+    profile_verify PATH PUBLIC_KEY_OR_ADDRESS
+                        Verify a signed profile with a public key or address. 
 `;
 
 /*
