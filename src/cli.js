@@ -1,10 +1,15 @@
 /* @flow */
 
-const Ajv = require('ajv');
 const blockstack = require('blockstack');
-const process = require('process');
-const bitcoinjs = require('bitcoinjs-lib');
+import process from 'process';
+import bitcoinjs from 'bitcoinjs-lib';
 import ecurve from 'ecurve';
+import fs from 'fs';
+const URL = require('url')
+
+import {
+  parseZoneFile
+} from 'zone-file';
 
 import { ECPair } from 'bitcoinjs-lib';
 const secp256k1 = ecurve.getCurveByName('secp256k1');
@@ -20,7 +25,8 @@ import {
   checkArgs,
   loadConfig,
   DEFAULT_CONFIG_PATH,
-  DEFAULT_CONFIG_REGTEST_PATH 
+  DEFAULT_CONFIG_REGTEST_PATH,
+  ADDRESS_PATTERN
 } from './argparse';
 
 import {
@@ -50,6 +56,25 @@ function getPrivateKeyAddress(network: Object, privateKey: string) : string {
   return network.coerceAddress(ecKeyPair.getAddress());
 }
 
+/*
+ * Coerse an address to be a mainnet address
+ */
+function coerceMainnetAddress(address: string) : string {
+  const addressHash = bitcoinjs.address.fromBase58Check(address).hash
+  return bitcoinjs.address.toBase58Check(addressHash, 0)
+}
+
+/*
+ * Get the canonical form of a hex-encoded private key
+ * (i.e. strip the trailing '01' if present)
+ */
+function canonicalPrivateKey(privkey: string) : string {
+  if (privkey.length == 66 && privkey.slice(-2) === '01') {
+    return privkey.substring(0,64);
+  }
+  return privkey;
+}
+    
 /* 
  * Get the sum of a set of UTXOs' values
  * @txIn (object) the transaction
@@ -70,7 +95,8 @@ function sumUTXOs(utxos: Array<UTXO>) {
  */
 function whois(network: Object, args: Array<string>) {
   const name = args[0];
-  return network.getNameInfo(name);
+  return network.getNameInfo(name)
+    .then(nameInfo => JSON.stringify(nameInfo));
 }
 
 /*
@@ -80,7 +106,8 @@ function whois(network: Object, args: Array<string>) {
  */
 function price(network: Object, args: Array<string>) {
   const name = args[0];
-  return network.getNamePrice(name);
+  return network.getNamePrice(name)
+    .then(priceInfo => JSON.stringify(priceInfo));
 }
 
 /*
@@ -90,18 +117,103 @@ function price(network: Object, args: Array<string>) {
  */
 function names(network: Object, args: Array<string>) {
   const address = args[0];
-  return network.getNamesOwned(address);
+  return network.getNamesOwned(address)
+    .then(namesList => JSON.stringify(namesList));
 }
 
 /*
- * Look up a name's profile
+ * Look up a name's profile and zonefile
  * args:
  * @name (string) the name to look up
  */
 function lookup(network: Object, args: Array<string>) {
   const name = args[0];
   const zonefileLookupUrl = network.blockstackAPIUrl + '/v1/names';
-  return blockstack.lookupProfile(name, zonefileLookupUrl);
+
+  const profilePromise = blockstack.lookupProfile(name, zonefileLookupUrl);
+  const zonefilePromise = Promise.resolve().then(() => {
+      return network.getNameInfo(name)
+    })
+    .then(nameInfo => nameInfo.zonefile);
+
+  return Promise.all([profilePromise, zonefilePromise])
+    .then(([profile, zonefile]) => {
+      const ret = {
+        zonefile: zonefile,
+        profile: profile
+      };
+      return JSON.stringify(ret);
+    });
+}
+
+/*
+ * Get a name's blockchain record
+ * args:
+ * @name (string) the name to query
+ */
+function getNameBlockchainRecord(network: Object, args: Array<string>) {
+  const name = args[0];
+  return Promise.resolve().then(() => {
+    return network.getBlockchainNameRecord(name);
+  })
+  .then((nameInfo) => {
+    return JSON.stringify(nameInfo);
+  });
+}
+
+/*
+ * Get a name's history entry or entries
+ * args:
+ * @name (string) the name to query
+ * @startHeight (int) optional: the start of the history range
+ * @endHeight (int) optional: the end of the history range
+ */
+function getNameHistoryRecord(network: Object, args: Array<string>) {
+  const name = args[0];
+  let startHeight = null;
+  let endHeight = null;
+
+  if (args.length >= 2) {
+    startHeight = parseInt(args[1]);
+  }
+  if (args.length >= 3) {
+    endHeight = parseInt(args[2]);
+  }
+
+  return Promise.resolve().then(() => {
+    return network.getNameHistory(name, startHeight, endHeight);
+  })
+  .then((nameHistory) => {
+    return JSON.stringify(nameHistory);
+  });
+}
+
+/*
+ * Get a namespace's blockchain record
+ * args:
+ * @namespaceID (string) the namespace to query
+ */
+function getNamespaceBlockchainRecord(network: Object, args: Array<string>) {
+  const namespaceID = args[0];
+  return Promise.resolve().then(() => {
+    return network.getNamespaceInfo(namespaceID);
+  })
+  .then((namespaceInfo) => {
+    return JSON.stringify(namespaceInfo);
+  });
+}
+
+/*
+ * Get a name's zone file
+ * args:
+ * @name (string) the name to query
+ */
+function getNameZonefile(network: Object, args: Array<string>) {
+  const name = args[0];
+  return Promise.resolve().then(() => {
+      return network.getNameInfo(name)
+    })
+    .then(nameInfo => nameInfo.zonefile);
 }
 
 /*
@@ -165,7 +277,7 @@ function preorder(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely preordered',
           'isNameValid': isNameValid,
@@ -174,7 +286,7 @@ function preorder(network: Object, args: Array<string>) {
           'isInGracePeriod': isInGracePeriod,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate
-        });
+        }));
       }
     });
 
@@ -272,14 +384,14 @@ function register(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely registered',
           'isNameValid': isNameValid,
           'isNameAvailable': isNameAvailable,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod
-        });
+        }));
       }
     });
   
@@ -374,13 +486,13 @@ function update(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely updated',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'isInGracePeriod': isInGracePeriod
-        });
+        }));
       }
     });
 
@@ -472,14 +584,14 @@ function transfer(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely transferred',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod
-        });
+        }));
       }
     });
 
@@ -616,13 +728,13 @@ function renew(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely renewed',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'addressCanReceiveName': addressCanReceiveName
-        });
+        }));
       }
     });
 
@@ -706,13 +818,13 @@ function revoke(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Name cannot be safely revoked',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'isInGracePeriod': isInGracePeriod
-        });
+        }));
       }
     });
 
@@ -798,14 +910,14 @@ function namespacePreorder(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Namespace cannot be safely preordered',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate,
-        });
+        }));
       }
     });
 
@@ -915,14 +1027,14 @@ function namespaceReveal(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Namespace cannot be safely revealed',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
           'paymentBalance': paymentBalance,
           'estimateCost': estimate,
-        });
+        }));
       }
     });
   
@@ -1001,7 +1113,7 @@ function namespaceReady(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error({
+        throw new Error(JSON.stringify({
           'status': false,
           'error': 'Namespace cannot be safely launched',
           'isNamespaceValid': isNamespaceValid,
@@ -1009,7 +1121,7 @@ function namespaceReady(network: Object, args: Array<string>) {
           'isPrivateKeyRevealer': isRevealer,
           'revealerBalance': revealerBalance,
           'estimateCost': estimate
-        });
+        }));
       }
     });
 
@@ -1033,22 +1145,363 @@ function namespaceReady(network: Object, args: Array<string>) {
 }
 
 /*
+ * Generate and send a name-import transaction
+ * @name (string) the name to import
+ * @recipientAddr (string) the recipient of the name
+ * @zonefileHash (string) the zone file hash
+ * @importKey (string) the key to pay for the import
+ */
+function nameImport(network: Object, args: Array<string>) {
+  const name = args[0];
+  const recipientAddr = args[1];
+  const zonefileHash = args[2];
+  const importKey = args[3];
+
+  const namespaceID = name.split('.').slice(-1);
+  const importAddress = getPrivateKeyAddress(network, importKey);
+
+  const txPromise = blockstack.transactions.makeNameImport(
+    name, recipientAddr, zonefileHash, importKey);
+
+  const importUTXOsPromise = network.getUTXOs(importAddress);
+
+  const estimatePromise = importUTXOsPromise.then((utxos) => {
+        const numUTXOs = utxos.length;
+        return blockstack.transactions.estimateNameImport(
+          name, recipientAddr, zonefileHash);
+      });
+
+  if (estimateOnly) {
+    return estimatePromise;
+  }
+  
+  if (!safetyChecks) {
+    if (txOnly) {
+      return txPromise;
+    }
+    else {
+      return txPromise
+        .then((tx) => {
+          return network.broadcastTransaction(tx);
+        });
+    }
+  }
+
+  const importBalancePromise = importUTXOsPromise.then((utxos) => {
+    return sumUTXOs(utxos);
+  });
+
+  const safetyChecksPromise = Promise.all([
+      blockstack.safety.namespaceIsReady(namespaceID),
+      blockstack.safety.namespaceIsRevealed(namespaceID),
+      blockstack.safety.addressCanReceiveName(recipientAddr),
+      importBalancePromise,
+      estimatePromise
+    ])
+    .then(([isNamespaceReady, isNamespaceRevealed, addressCanReceive,
+            importBalance, estimate]) => {
+      if (!isNamespaceReady && isNamespaceRevealed && addressCanReceive &&
+          importBalance >= estimate) {
+        return {'status': true};
+      }
+      else {
+        throw new Error(JSON.stringify({
+          'status': false,
+          'error': 'Name cannot be safetly imported',
+          'isNamespaceReady': isNamespaceReady,
+          'isNamespaceRevealed': isNamespaceRevealed,
+          'addressCanReceiveName': addressCanReceive,
+          'importBalance': importBalance,
+          'estimateCost': estimate
+        }));
+      }
+  });
+
+  return safetyChecksPromise
+    .then((safetyChecksResult) => {
+      if (!safetyChecksResult.status) {
+        return new Promise((resolve) => resolve(safetyChecksResult));
+      }
+
+      if (txOnly) {
+        return txPromise;
+      }
+
+      return txPromise.then((tx) => {
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
+      });
+    });
+}
+
+
+/*
+ * Announce a message to subscribed peers by means of an Atlas zone file
+ * @messageHash (string) the hash of the already-sent message
+ * @senderKey (string) the key that owns the name that the peers have subscribed to
+ */
+function announce(network: Object, args: Array<string>) {
+  const messageHash = args[0];
+  const senderKey = args[1];
+
+  const senderAddress = getPrivateKeyAddress(network, senderKey);
+
+  const txPromise = blockstack.transactions.makeAnnounce(
+    messageHash, senderKey);
+
+  const senderUTXOsPromise = network.getUTXOs(senderAddress);
+
+  const estimatePromise = senderUTXOsPromise.then((utxos) => {
+        const numUTXOs = utxos.length;
+        return blockstack.transactions.estimateAnnounce(messageHash)
+      });
+
+  if (estimateOnly) {
+    return estimatePromise;
+  }
+  
+  if (!safetyChecks) {
+    if (txOnly) {
+      return txPromise;
+    }
+    else {
+      return txPromise
+        .then((tx) => {
+          return network.broadcastTransaction(tx);
+        });
+    }
+  }
+
+  const senderBalancePromise = senderUTXOsPromise.then((utxos) => {
+    return sumUTXOs(utxos);
+  });
+
+  const safetyChecksPromise = Promise.all(
+     [senderBalancePromise, estimatePromise])
+    .then(([senderBalance, estimate]) => {
+      if (senderBalance >= estimate) {
+        return {'status': true};
+      }
+      else {
+        throw new Error(JSON.stringify({
+          'status': false,
+          'error': 'Announcement cannot be safely sent',
+          'senderBalance': senderBalance,
+          'estimateCost': estimate
+        }));
+      }
+  });
+
+  return safetyChecksPromise
+    .then((safetyChecksResult) => {
+      if (!safetyChecksResult.status) {
+        return new Promise((resolve) => resolve(safetyChecksResult));
+      }
+
+      if (txOnly) {
+        return txPromise;
+      }
+
+      return txPromise.then((tx) => {
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
+      });
+    });
+}
+
+/*
+ * Sign a profile.
+ * @path (string) path to the profile
+ * @privateKey (string) the owner key
+ */
+function profileSign(network: Object, args: Array<string>) {
+  const profilePath = args[0];
+  const privateKey = args[1];
+  const profileData = JSON.parse(fs.readFileSync(profilePath).toString());
+  return Promise.resolve().then(() => {
+    const signedToken = blockstack.signProfileToken(profileData, privateKey);
+    const wrappedToken = blockstack.wrapProfileToken(signedToken);
+    const tokenRecords = [wrappedToken];
+    return JSON.stringify(tokenRecords);
+  });
+}
+
+/*
+ * Verify a profile with an address or public key
+ * @path (string) path to the profile
+ * @publicKeyOrAddress (string) public key or address
+ */
+function profileVerify(network: Object, args: Array<string>) {
+  const profilePath = args[0];
+  let publicKeyOrAddress = args[1];
+
+  // need to coerce mainnet 
+  if (publicKeyOrAddress.match(ADDRESS_PATTERN)) {
+    publicKeyOrAddress = coerceMainnetAddress(publicKeyOrAddress);
+  }
+  
+  const profileString = fs.readFileSync(profilePath).toString();
+  
+  return Promise.resolve().then(() => {
+    let profileToken = null;
+    
+    try {
+      const profileTokens = JSON.parse(profileString);
+      profileToken = profileTokens[0].token;
+    }
+    catch (e) {
+      // might be a raw token 
+      profileToken = profileString;
+    }
+
+    if (!profileToken) {
+      throw new Error(`Data at ${profilePath} does not appear to be a signed profile`);
+    }
+   
+    const profile = blockstack.extractProfile(profileToken, publicKeyOrAddress);
+    return JSON.stringify(profile);
+  });
+}
+
+/*
+ * Upload data to a Gaia hub
+ * @gaiaHubUrl (string) the base scheme://host:port URL to the Gaia hub
+ * @gaiaData (string) the data to upload
+ * @privateKey (string) the private key to use to sign the challenge
+ */
+function gaiaUpload(network: Object,
+                    gaiaHubURL: string, 
+                    gaiaPath: string,
+                    gaiaData: string,
+                    privateKey: string) {
+  const ownerAddress = getPrivateKeyAddress(network, privateKey);
+  const ownerAddressMainnet = coerceMainnetAddress(ownerAddress); 
+  return blockstack.connectToGaiaHub(gaiaHubURL, canonicalPrivateKey(privateKey))
+    .then((hubConfig) => {
+      if (hubConfig.address !== ownerAddressMainnet) {
+        throw new Error(`Invalid private key: ${hubConfig.address} != ${ownerAddressMainnet}`);
+      }
+      if (!hubConfig.url_prefix.startsWith(gaiaHubURL)) {
+        throw new Error(`Invalid Gaia hub URL: must match ${hubConfig.url_prefix}`);
+      }
+      return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
+    });
+}
+
+/*
+ * Store a signed profile for a name.
+ * * verify that the profile was signed by the name's owner address
+ * * verify that the private key matches the name's owner address
+ *
+ * Assumes that the URI records are all Gaia hubs
+ *
+ * @name (string) name to get the profile
+ * @path (string) path to the signed profile token
+ * @privateKey (string) owner private key for the name
+ */
+function profileStore(network: Object, args: Array<string>) {
+  const name = args[0];
+  const signedProfilePath = args[1];
+  const privateKey = args[2];
+  const signedProfileData = fs.readFileSync(signedProfilePath).toString();
+
+  const ownerAddress = getPrivateKeyAddress(network, privateKey);
+  const ownerAddressMainnet = coerceMainnetAddress(ownerAddress);
+
+  const lookupPromise = network.getNameInfo(name);
+  const verifyProfilePromise = profileVerify(network, [signedProfilePath, ownerAddressMainnet]);
+    
+  return Promise.all([lookupPromise, verifyProfilePromise])
+    .then(([nameInfo, verifiedProfile]) => {
+      if (network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress)) {
+        throw new Error(`Name owner address ${nameInfo.address} does not 
+          match private key address ${ownerAddress}`);
+      }
+      if (!nameInfo.zonefile) {
+        throw new Error(`Could not load zone file for '${name}'`)
+      }
+
+      const zonefile = parseZoneFile(nameInfo.zonefile);
+      const gaiaProfileUrls = zonefile.uri.map((uriRec) => uriRec.target);
+      const gaiaUrls = gaiaProfileUrls.map((gaiaProfileUrl) => {
+        const urlInfo = URL.parse(gaiaProfileUrl);
+        if (!urlInfo.protocol) {
+          return null;
+        }
+        if (!urlInfo.host) {
+          return null;
+        }
+        if (!urlInfo.path) {
+          return null;
+        }
+        if (!urlInfo.path.endsWith('profile.json')) {
+          return null;
+        }
+        // keep flow happy
+        return `${String(urlInfo.protocol)}//${String(urlInfo.host)}`;
+      })
+      .filter((gaiaUrl) => !!gaiaUrl);
+
+      const uploadPromises = gaiaUrls.map((gaiaUrl) => 
+        gaiaUpload(network, gaiaUrl, 'profile.json', signedProfileData, privateKey));
+
+      return Promise.all(uploadPromises)
+        .then((publicUrls) => {
+          return JSON.stringify({ 'profileUrls': publicUrls });
+        });
+    });
+}
+
+/*
+ * Push a zonefile to the Atlas network
+ * @zonefileDataOrPath (string) the zonefile data to push, or the path to the data
+ */
+function zonefilePush(network: Object, args: Array<string>) {
+  const zonefileDataOrPath = args[0];
+  let zonefileData = null;
+
+  try {
+    zonefileData = fs.readFileSync(zonefileDataOrPath);
+  } catch(e) {
+    zonefileData = zonefileDataOrPath;
+  }
+
+  return network.putZonefile(zonefileData)
+    .then((result) => {
+      return JSON.stringify(result);
+    });
+}
+
+/*
  * Global set of commands
  */
 const COMMANDS = {
+  'announce': announce,
+  'get_name_blockchain_record': getNameBlockchainRecord,
+  'get_name_blockchain_history': getNameHistoryRecord,
+  'get_namespace_blockchain_record': getNamespaceBlockchainRecord,
   'lookup': lookup,
   'names': names,
+  'name_import': nameImport,
   'namespace_preorder': namespacePreorder,
   'namespace_reveal': namespaceReveal,
   'namespace_ready': namespaceReady,
   'preorder': preorder,
   'price': price,
+  'profile_sign': profileSign,
+  'profile_store': profileStore,
+  'profile_verify': profileVerify,
   'register': register,
   'renew': renew,
   'revoke': revoke,
   'transfer': transfer,
   'update': update,
-  'whois': whois
+  'whois': whois,
+  'zonefile_push': zonefilePush
 };
 
 /*
@@ -1092,7 +1545,8 @@ export function CLIMain() {
     .then((result) => console.log(result))
     .then(() => process.exit(0))
     .catch((e) => {
-       console.error(e);
+       console.error(e.stack);
+       console.error(e.message);
        process.exit(1);
      });
   }
