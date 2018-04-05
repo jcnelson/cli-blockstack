@@ -62,8 +62,8 @@ export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
   putZonefile(zonefileData: string) : Promise<*> {
     // TODO: consider moving this to blockstack.js
     const requestHeaders = {
-      Accept: 'application/octet-stream',
-      'Content-Type': 'application/octet-stream'
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
     };
 
     const options = {
@@ -76,7 +76,7 @@ export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
     return fetch(url, options)
       .then(resp => {
         if (resp.status === 200 || resp.status === 202) {
-          return {'status': true};
+          return resp.json().then(respJSON => respJSON)
         }
         else {
           throw new Error(`Failed to store zonefile: status code ${resp.status}`);
