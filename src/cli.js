@@ -11,6 +11,11 @@ import {
   parseZoneFile
 } from 'zone-file';
 
+import {
+  getOwnerKeyInfo,
+  getPaymentKeyInfo
+} from './keys';
+
 import { ECPair } from 'bitcoinjs-lib';
 const secp256k1 = ecurve.getCurveByName('secp256k1');
 
@@ -223,7 +228,7 @@ function getNameZonefile(network: Object, args: Array<string>) {
  * @address (string) the address to own the name
  * @paymentKey (string) the payment private key
  */
-function preorder(network: Object, args: Array<string>) {
+function txPreorder(network: Object, args: Array<string>) {
   const name = args[0];
   const address = args[1];
   const paymentKey = args[2];
@@ -310,6 +315,15 @@ function preorder(network: Object, args: Array<string>) {
 }
 
 /*
+ * Register a name the easy way.  Send the preorder
+ * and register transactions to the broadcaster, as 
+ * well as the zone file if given.
+ */
+function register(network: Object, args: Array<string>) {
+  throw new Error("Not implemented yet");
+}
+
+/*
  * Generate and optionally send a name-register
  * args:
  * @name (string) the name to register
@@ -319,7 +333,7 @@ function preorder(network: Object, args: Array<string>) {
  * @zonefileHash (string) if given, this is the raw zone file hash to use
  *  (in which case, @zonefile will be ignored)
  */
-function register(network: Object, args: Array<string>) {
+function txRegister(network: Object, args: Array<string>) {
   const name = args[0];
   const address = args[1];
   const paymentKey = args[2];
@@ -1418,8 +1432,8 @@ function profileStore(network: Object, args: Array<string>) {
   return Promise.all([lookupPromise, verifyProfilePromise])
     .then(([nameInfo, verifiedProfile]) => {
       if (network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress)) {
-        throw new Error(`Name owner address ${nameInfo.address} does not 
-          match private key address ${ownerAddress}`);
+        throw new Error(`Name owner address ${nameInfo.address} does not match ` +
+          `private key address ${ownerAddress}`);
       }
       if (!nameInfo.zonefile) {
         throw new Error(`Could not load zone file for '${name}'`)
@@ -1477,20 +1491,58 @@ function zonefilePush(network: Object, args: Array<string>) {
 }
 
 /*
+ * Get the owner private key(s) from a backup phrase
+ * args:
+ * @mnemonic (string) the 12-word phrase
+ * @max_index (integer) (optional) the profile index maximum
+ */
+function getOwnerKeys(network: Object, args: Array<string>) {
+  const mnemonic = args[0];
+  let maxIndex = 1;
+  if (args.length > 1) {
+    maxIndex = parseInt(args[1]);
+  }
+
+  let keyInfo = [];
+  for (let i = 0; i < maxIndex; i++) {
+    keyInfo.push(getOwnerKeyInfo(mnemonic, i));
+  }
+  
+  return Promise.resolve().then(() => JSON.stringify(keyInfo));
+}
+
+/*
+ * Get the payment private key from a backup phrase 
+ * args:
+ * @mnemonic (string) the 12-word phrase
+ */
+function getPaymentKey(network: Object, args: Array<string>) {
+  const mnemonic = args[0];
+  
+  // keep the return value consistent with getOwnerKeys 
+  let keyInfo = [];
+  keyInfo.push(getPaymentKeyInfo(mnemonic));
+  return Promise.resolve().then(() => JSON.stringify(keyInfo));
+}
+
+
+/*
  * Global set of commands
  */
 const COMMANDS = {
   'announce': announce,
-  'get_name_blockchain_record': getNameBlockchainRecord,
-  'get_name_blockchain_history': getNameHistoryRecord,
+  'get_blockchain_record': getNameBlockchainRecord,
+  'get_blockchain_history': getNameHistoryRecord,
+  'get_zonefile': getNameZonefile,
   'get_namespace_blockchain_record': getNamespaceBlockchainRecord,
+  'get_owner_keys': getOwnerKeys,
+  'get_payment_key': getPaymentKey,
   'lookup': lookup,
   'names': names,
   'name_import': nameImport,
   'namespace_preorder': namespacePreorder,
   'namespace_reveal': namespaceReveal,
   'namespace_ready': namespaceReady,
-  'preorder': preorder,
   'price': price,
   'profile_sign': profileSign,
   'profile_store': profileStore,
@@ -1499,6 +1551,8 @@ const COMMANDS = {
   'renew': renew,
   'revoke': revoke,
   'transfer': transfer,
+  'tx_preorder': txPreorder,
+  'tx_register': txRegister,
   'update': update,
   'whois': whois,
   'zonefile_push': zonefilePush
