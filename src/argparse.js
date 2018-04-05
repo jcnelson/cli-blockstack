@@ -61,7 +61,7 @@ const CLI_ARGS = {
       minItems: 2,
       maxItems: 2,
     },
-    get_name_blockchain_record: {
+    get_blockchain_record: {
       type: "array",
       items: {
         type: "string",
@@ -70,7 +70,7 @@ const CLI_ARGS = {
       minItems: 1,
       maxItems: 1,
     },
-    get_name_blockchain_history: {
+    get_blockchain_history: {
       type: "array",
       items: {
         type: "string",
@@ -88,7 +88,31 @@ const CLI_ARGS = {
       minItems: 1,
       maxItems: 1,
     },
-    get_name_zonefile: {
+    get_owner_keys: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+        },
+        {
+          type: "string",
+          pattern: "^[0-9]+$",
+        }
+      ],
+      minItems: 1,
+      maxItems: 2
+    },
+    get_payment_key: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+        },
+      ],
+      minItems: 1,
+      maxItems: 1
+    },
+    get_zonefile: {
       type: "array",
       items: {
         type: "string",
@@ -226,25 +250,6 @@ const CLI_ARGS = {
       minItems: 2,
       maxItems: 2,
     },
-    preorder: {
-      type: "array",
-      items: [
-        {
-          type: 'string',
-          pattern: NAME_PATTERN,
-        },
-        {
-          type: 'string',
-          pattern: ADDRESS_PATTERN,
-        },
-        {
-          type: 'string',
-          pattern: PRIVATE_KEY_PATTERN
-        },
-      ],
-      minItems: 3,
-      maxItems: 3,
-    },
     price: {
       type: "array",
       items: {
@@ -296,32 +301,6 @@ const CLI_ARGS = {
         }
       ]
     },
-    register: {
-      type: "array",
-      items: [
-        {
-          type: 'string',
-          pattern: NAME_PATTERN,
-        },
-        {
-          type: 'string',
-          pattern: ADDRESS_PATTERN,
-        },
-        {
-          type: 'string',
-          pattern: PRIVATE_KEY_PATTERN,
-        },
-        {
-          type: 'string',
-        },
-        {
-          type: 'string',
-          pattern: ZONEFILE_HASH_PATTERN,
-        },
-      ],
-      minItems: 3,
-      maxItems: 5,
-    },
     renew: {
       type: "array",
       items: [
@@ -351,6 +330,28 @@ const CLI_ARGS = {
       ],
       minItems: 3,
       maxItems: 6,
+    },
+    register: {
+      type: "array",
+      items: [
+        {
+          type: 'string',
+          pattern: NAME_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: 'string',
+        },
+        {
+          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+      ],
+      minItems: 4,
+      maxItems: 4,
     },
     revoke: {
       type: "array",
@@ -396,6 +397,51 @@ const CLI_ARGS = {
         },
       ],
       minItems: 5,
+      maxItems: 5,
+    },
+    tx_preorder: {
+      type: "array",
+      items: [
+        {
+          type: 'string',
+          pattern: NAME_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+    },
+    tx_register: {
+      type: "array",
+      items: [
+        {
+          type: 'string',
+          pattern: NAME_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+        {
+          type: 'string',
+        },
+        {
+          type: 'string',
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
+      ],
+      minItems: 3,
       maxItems: 5,
     },
     update: {
@@ -449,82 +495,136 @@ const CLI_ARGS = {
 // usage string
 const USAGE = `Usage: ${process.argv[1]} [options] command [command arguments]
 Options can be:
-    -c                  Path to a config file (defaults to ${DEFAULT_CONFIG_PATH})
-    -e                  Estimate the BTC cost of an operation (in satoshis).
+    -c                  Path to a config file (defaults to
+                        ${DEFAULT_CONFIG_PATH})
+
+    -e                  Estimate the BTC cost of an transaction (in satoshis).
                         Do not generate or send any transactions.
-    -t                  Use integration test framework
+
+    -t                  Use integration test framework instead of mainnet.
+
     -U                  Unsafe mode.  No safety checks will be performed.
+
     -x                  Do not broadcast a transaction.  Only generate and
-                        print them.
+                        print them to stdout.
+
     -C CONSENSUS_HASH   Use the given consensus hash instead of one obtained
-                        over the network (requires -t)
+                        from the network (requires -t)
+
     -F FEE_RATE         Use the given transaction fee rate instead of the one
                         obtained from the Bitcoin network (requires -t)
+
     -B BURN_ADDR        Use the given namespace burn address instead of the one
-                        obtained from the Bitcoin network (requires -t)
+                        obtained from the Blockstack network (requires -t)
+
 Command reference
-  Querying names
-    lookup NAME         Look up a name's profile and zonefile
-    whois NAME          Get basic name and zonefile information for a Blockstack ID
+  Querying Blockstack IDs
+    lookup BLOCKSTACK_ID
+                        Look up a Blockstack ID's profile and zonefile
+    whois BLOCKSTACK_ID 
+                        Get basic name and zonefile information for a
+                        Blockstack ID
+
+  Querying the Blockchain
+    get_blockchain_record BLOCKSTACK_ID
+                        Get the full on-chain record for a Blockstack ID
+    get_blockchain_history BLOCKSTACK_ID [START_BLOCK [END_BLOCK]]
+                        Get the history of operations for a Blockstack ID
+    price BLOCKSTACK_ID
+                        Find out how much a Blockstack ID costs, and in
+                        what currency units.
+
+    names ADDR          List all Blockstack IDs owned by an address
 
 
-  Querying the blockchain
-    get_name_blockchain_record NAME
-                        Get the full on-chain record for a name
-    get_name_blockchain_history NAME [START_BLOCK [END_BLOCK]]
-                        Get the history of operations for a name
-    price NAME          Find out how much a name costs
-    names ADDR          List all names owned by an address
-
-
-  Creating namespaces
+  Namespace Creation
     namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
                         Preorder a namespace.  EXPENSIVE!
+
     namespace_reveal NAMESPACE REVEAL_ADDR VERSION LIFETIME COEFF BASE
       BUCKET_CSV NONALPHA_DISCOUNT NOVOWEL_DISCOUNT PAYMENT_KEY
                         Reveal a namespace with the given parameters
+
     namespace_ready NAMESPACE REVEAL_KEY
                         Launch a revealed namespace
+
     name_import NAME RECIPIENT_ADDR ZONEFILE_HASH IMPORT_KEY
                         Import a name into a namespace
 
 
-  Peer services
+  Peer Services
     announce MESSAGE_HASH PRIVATE_KEY
                         Broadcast a message on the blockchain for subscribers to read
-    get_name_zonefile NAME
-                        Get a name's raw zonefile
+
+    get_zonefile NAME
+                        Get a Blockstack ID's raw zonefile
+
     zonefile_push ZONEFILE_DATA_OR_PATH
                         Push an already-announced zone file to the Atlas network
 
 
-  Name management
-    preorder NAME ADDR PAYMENT_KEY
-                        Preorder a name to a given address
-    register NAME ADDR PAYMENT_KEY [NEW_ZONEFILE [ZONEFILE_HASH]]
-                        Register a name to a given address, and optionally
-                        give it its first zone file.  If ZONEFILE_HASH is given,
-                        then NEW_ZONEFILE will be ignored.
-    revoke NAME OWNER_KEY PAYMENT_KEY
-                        Revoke a name
-    renew NAME OWNER_KEY PAYMENT_KEY [NEW_ADDR [NEW_ZONEFILE [NEW_ZONEFILE_HASH]]]
+  Blockstack ID Management
+    register BLOCKSTACK_ID ADDR ZONEFILE PAYMENT_KEY
+                        Register a Blockstack ID to a given address.  This
+                        will automatically generate and propagate the two
+                        blockchain transactions required to do this, and
+                        will automatically propagate the given zone file
+                        to the Blockstack peer network once the transactions
+                        confirm.
+
+    revoke BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY
+                        Revoke a Blockstack ID
+
+    renew BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY [ADDR [ZONEFILE [ZONEFILE_HASH]]]
                         Renew a name, optionally sending it to a new
-                        address and giving it a new zone file.  If NEW_ZONEFILE_HASH
-                        is given, then NEW_ZONEFILE will be ignored.
-    transfer NAME NEW_ADDR KEEP_ZONEFILE OWNER_KEY PAYMENT_KEY
-                        Transfer a name to a new address
-    update NAME ZONEFILE OWNER_KEY PAYMENT_KEY [ZONEFILE_HASH]
-                        Update a name's zone file.  If ZONEFILE_HASH is given, ZONEFILE
-                        will be ignored.
+                        address and giving it a new zone file.  If ZONEFILE_HASH
+                        is given, then ZONEFILE will be ignored.
 
+    transfer BLOCKSTACK_ID NEW_ADDR KEEP_ZONEFILE OWNER_KEY PAYMENT_KEY
+                        Transfer a name to a new address.  If KEEP_ZONEFILE
+                        is True, then the Blockstack ID's zone file will
+                        be preserved.
 
-  Profile management
+    update BLOCKSTACK_ID ZONEFILE OWNER_KEY PAYMENT_KEY [ZONEFILE_HASH]
+                        Update a Blockstack ID's zone file.  If ZONEFILE_HASH
+                        is given, ZONEFILE will be ignored.
+
+  Advanced Blockstack ID Management
+    tx_preorder BLOCKSTACK_ID ADDR PAYMENT_KEY
+                        (ADVANCED) Generate and send a NAME_PREORDER transaction
+                        that will preorder a Blockstack ID to a given address.
+                        Consider using the 'register' command instead.
+
+    tx_register BLOCKSTACK_ID ADDR PAYMENT_KEY [ZONEFILE [ZONEFILE_HASH]]
+                        (ADVANCED) Generate and send a NAME_REGISTRATION
+                        transaction that will register a preordered Blockstack
+                        ID to a given address and optionally give it its first
+                        zone file.  If ZONEFILE_HASH is given, then ZONEFILE
+                        will be ignored.  The zone file will not be propagated
+                        to the Blockstack peer network--you will have to do that
+                        yourself with the 'zonefile_push' command.  Consider
+                        using the 'register' command instead.
+
+  Profile Management
     profile_sign PATH PRIVATE_KEY
                         Sign profile JSON with a given key.
+
     profile_store NAME PATH PRIVATE_KEY
                         Store a signed profile to a name's Gaia hub
+
     profile_verify PATH PUBLIC_KEY_OR_ADDRESS
                         Verify a signed profile with a public key or address. 
+
+  Key Management
+    get_owner_keys 12_WORD_PHRASE [MAX_INDEX]
+                        Get the owner private key(s) and ID-addresses from a
+                        12-word backup phrase.  If MAX_INDEX is given, then 
+                        then generate the owner keys and ID-addresses from 
+                        index 0 to MAX_INDEX.  Otherwise, only generate the
+                        key and ID-address at index 0.
+
+    get_payment_key 12_WORD_PHRASE
+                        Get the payment private key of a 12-word backup phrase.
 `;
 
 /*
