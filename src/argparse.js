@@ -27,6 +27,9 @@ export const ZONEFILE_HASH_PATTERN = '^([0-9a-f]{40})$'
 
 export const URL_PATTERN = "^http[s]?://.+$"
 
+export const SUBDOMAIN_PATTERN =
+  '^([0-9a-z_+-]{1,37})\.([0-9a-z_.+-]{3,37})$'
+
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
@@ -61,11 +64,58 @@ const CLI_ARGS = {
       minItems: 2,
       maxItems: 2,
     },
+    balance: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: ADDRESS_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 1,
+    },
+    get_account_history: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: "^[0-9]+$",
+        },
+        {
+          type: "string",
+          pattern: "^[0-9]+$",
+        },
+        {
+          type: "string",
+          pattern: "^[0-9]+$",
+        },
+      ],
+      minItems: 4,
+      maxItems: 4,
+    },
+    get_account_at: {
+      type: "array",
+      items: [
+        {
+          type: "string",
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: "string",
+          pattern: "^[0-9]+$",
+        },
+      ],
+      minItems: 2,
+      maxItems: 2,
+    },
     get_blockchain_record: {
       type: "array",
       items: {
         type: "string",
-        pattern: NAME_PATTERN,
+        pattern: `^${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
       },
       minItems: 1,
       maxItems: 1,
@@ -74,7 +124,7 @@ const CLI_ARGS = {
       type: "array",
       items: {
         type: "string",
-        pattern: NAME_PATTERN,
+        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
       },
       minItems: 1,
       maxItems: 3,
@@ -116,7 +166,7 @@ const CLI_ARGS = {
       type: "array",
       items: {
         type: "string",
-        pattern: NAME_PATTERN,
+        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
       },
       minItems: 1,
       maxItems: 1,
@@ -125,7 +175,7 @@ const CLI_ARGS = {
       type: "array",
       items: {
         type: "string",
-        pattern: NAME_PATTERN
+        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
       },
       minItems: 1,
       maxItems: 1,
@@ -259,6 +309,15 @@ const CLI_ARGS = {
       minItems: 1,
       maxItems: 1,
     },
+    price_namespace: {
+      type: "array",
+      items: {
+        type: "string",
+        pattern: NAMESPACE_PATTERN,
+      },
+      minItems: 1,
+      maxItems: 1,
+    },
     profile_sign: {
       type: "array",
       items: [
@@ -278,7 +337,7 @@ const CLI_ARGS = {
       items: [
         {
           type: "string",
-          pattern: NAME_PATTERN
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}`,
         },
         {
           type: "string",
@@ -371,6 +430,33 @@ const CLI_ARGS = {
       ],
       minItems: 3,
       maxItems: 3,
+    },
+    send_tokens: {
+      type: "array",
+      items: [
+        {
+          type: 'string',
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: `${NAMESPACE_PATTERN}|^STACKS$`,
+        },
+        {
+          type: 'string',
+          pattern: '^[0-9]+$',
+        },
+        {
+          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: '^.{0,34}$',
+        },
+      ],
+      minItems: 4,
+      maxItems: 5,
     },
     transfer: {
       type: "array",
@@ -474,7 +560,7 @@ const CLI_ARGS = {
       type: "array",
       items: {
         type: "string",
-        pattern: NAME_PATTERN
+        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}`,
       },
       minItems: 1,
       maxItems: 1
@@ -517,27 +603,36 @@ Options can be:
     -B BURN_ADDR        Use the given namespace burn address instead of the one
                         obtained from the Blockstack network (requires -t)
 
+    -P PRICE            Use the given price to pay for names or namespaces
+                        (requires -t)
+
+    -D DENOMINATION     Denominate the price to pay in the given units
+                        (requires -t and -P)
+
 Command reference
   Querying Blockstack IDs
+    get_blockchain_record BLOCKSTACK_ID
+                        Get the full on-chain record for a Blockstack ID
+
+    get_blockchain_history BLOCKSTACK_ID [START_BLOCK [END_BLOCK]]
+                        Get the history of operations for a Blockstack ID
+
     lookup BLOCKSTACK_ID
                         Look up a Blockstack ID's profile and zonefile
+
+    price BLOCKSTACK_ID
+                        Find out how much a Blockstack ID costs, and in
+                        what currency units.
+
     whois BLOCKSTACK_ID 
                         Get basic name and zonefile information for a
                         Blockstack ID
 
   Querying the Blockchain
-    get_blockchain_record BLOCKSTACK_ID
-                        Get the full on-chain record for a Blockstack ID
-    get_blockchain_history BLOCKSTACK_ID [START_BLOCK [END_BLOCK]]
-                        Get the history of operations for a Blockstack ID
-    price BLOCKSTACK_ID
-                        Find out how much a Blockstack ID costs, and in
-                        what currency units.
-
-    names ADDR          List all Blockstack IDs owned by an address
+    names ADDR          List all Blockstack IDs owned by an account address
 
 
-  Namespace Creation
+  Namespace Operations
     namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
                         Preorder a namespace.  EXPENSIVE!
 
@@ -551,6 +646,9 @@ Command reference
     name_import NAME RECIPIENT_ADDR ZONEFILE_HASH IMPORT_KEY
                         Import a name into a namespace
 
+    price_namespace NAMESPACE_ID
+                        Find out how much a Blockstack namespace costs, and in
+                        what currency units.
 
   Peer Services
     announce MESSAGE_HASH PRIVATE_KEY
@@ -625,6 +723,22 @@ Command reference
 
     get_payment_key 12_WORD_PHRASE
                         Get the payment private key of a 12-word backup phrase.
+
+  Account Management
+    balance ADDRESS
+                        Get the balances of all of an address's tokens
+
+    get_account_at ADDRESS BLOCK_HEIGHT
+                        Get the state(s) of an account at a particular block height
+
+    get_account_history ADDRESS PAGE
+                        Get a page of an account's history
+
+    send_tokens ADDRESS TOKEN_TYPE AMOUNT PRIVKEY [MEMO]
+                        Send tokens to an account address using the private key of
+                        an existing account.  TOKEN_TYPE is the name of the namespace
+                        that defines the token, or "STACKS".  Optionally include
+                        a memo in the transaction of up to 34 bytes.
 `;
 
 /*
@@ -642,7 +756,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'etUxC:F:B:') : Object {
+                           opts: string = 'etUxC:F:B:P:D:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);
