@@ -2,43 +2,188 @@
 
 const blockstack = require('blockstack');
 const Promise = require('bluebird');
+const bigi = require('bigi');
+const bitcoin = require('bitcoinjs-lib');
+
 Promise.onPossiblyUnhandledRejection(function(error){
     throw error;
 });
 
+const SATOSHIS_PER_BTC = 1e8
+
 /*
- * Adapter class for regtest that allows us to use data obtained
+ * Adapter class that allows us to use data obtained
  * from the CLI.
  */
-export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
+export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   consensusHash: string | null
   feeRate: number | null
   namespaceBurnAddress: string | null
+  priceToPay: number | null
+  priceUnits: string | null
 
   constructor(network: blockstack.network.BlockstackNetwork, consensusHash: string | null,
-              feeRate: number | null, namespaceBurnAddress: string | null) {
+              feeRate: number | null, namespaceBurnAddress: string | null,
+              priceToPay: number | null, priceUnits: string | null) {
 
     super(network.blockstackAPIUrl, network.broadcastServiceUrl, network.btc, network.layer1);
     this.consensusHash = consensusHash;
     this.feeRate = feeRate;
     this.namespaceBurnAddress = namespaceBurnAddress
+    this.priceToPay = priceToPay
+    this.priceUnits = priceUnits
+  }
+
+  isMainnet() : boolean {
+    return this.layer1.pubKeyHash === bitcoin.networks.bitcoin.pubKeyHash;
+  }
+
+  isTestnet() : boolean {
+    return this.layer1.pubKeyHash === bitcoin.networks.testnet.pubKeyHash;
+  }
+
+  coerceAddress(address: string) : string {
+    // TODO: move to blockstack.js
+    const addrInfo = bitcoin.address.fromBase58Check(address);
+    const addrHash = addrInfo.hash;
+    if (addrInfo.version === bitcoin.networks.bitcoin.pubKeyHash ||
+        addrInfo.version === bitcoin.networks.testnet.pubKeyHash) {
+      // p2pkh address
+      return bitcoin.address.toBase58Check(addrHash, this.layer1.pubKeyHash);
+    } else if (addrInfo.version === bitcoin.networks.bitcoin.scriptHash ||
+            addrInfo.version === bitcoin.networks.testnet.scriptHash) {
+      // p2sh address
+      return bitcoin.address.toBase58Check(addrHash, this.layer1.scriptHash);
+    }
+    else {
+      throw new Error(`Unknown address version of ${address}`);
+    }
   }
 
   getFeeRate() : Promise<number> {
     if (this.feeRate) {
+      // override with CLI option
       return this.feeRate;
+    }
+    if (this.isTestnet()) {
+      // in regtest mode 
+      return Promise.resolve(Math.floor(0.00001000 * SATOSHIS_PER_BTC))
     }
     return super.getFeeRate();
   }
 
   getConsensusHash() {
+    // override with CLI option
     if (this.consensusHash) {
       return new Promise((resolve) => resolve(this.consensusHash));
     }
     return super.getConsensusHash();
   }
 
+  getNamePriceV1(fullyQualifiedName: string) : Promise<*> {
+    // fall back to blockstack.js
+    return super.getNamePrice(fullyQualifiedName);
+  }
+
+  getNamespacePriceV1(namespaceID: string) : Promise<*> {
+    // fall back to blockstack.js 
+    return super.getNamespacePrice(namespaceID);
+  }
+
+  getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
+    return fetch(`${this.blockstackAPIUrl}/v2/prices/names/${fullyQualifiedName}`)
+      .then(resp => resp.json())
+      .then(resp => resp.name_price)
+      .then(namePrice => {
+        if (!namePrice) {
+          throw new Error(
+            `Failed to get price for ${fullyQualifiedName}. Does the namespace exist?`)
+        }
+        const result = {
+          units: namePrice.units,
+          amount: bigi.fromByteArrayUnsigned(namePrice.amount)
+        };
+        return result
+      })
+  }
+
+  getNamespacePriceV2(namespaceID: string) : Promise<*> {
+    return fetch(`${this.blockstackAPIUrl}/v2/prices/namespaces/${namespaceID}`)
+      .then(resp => resp.json())
+      .then(namespacePrice => {
+        if (!namespacePrice) {
+          throw new Error(`Failed to get price for ${namespaceID}`)
+        }
+        const result = {
+          units: namespacePrice.units,
+          amount: bigi.fromByteArrayUnsigned(namespacePrice.amount)
+        };
+        return result
+      })
+  }
+
+  getNamePriceCompat(fullyQualifiedName: string) : Promise<*> {
+    // handle v1 or v2 
+    return Promise.resolve().then(() => {
+      return this.getNamePriceV2(fullyQualifiedName);
+    })
+    .catch(() => {
+      return this.getNamePriceV1(fullyQualifiedName)
+        .then((namePriceSatoshis) => {
+          if (!namePriceSatoshis) {
+            throw new Error(`Failed to get price for ${fullyQualifiedName}`);
+          }
+          return {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(namePriceSatoshis))
+          };
+        });
+    });
+  }
+
+  getNamespacePriceCompat(namespaceID: string) : Promise<*> {
+    // handle v1 or v2 
+    return Promise.resolve().then(() => {
+      return this.getNamespacePriceV2(namespaceID);
+    })
+    .catch(() => {
+      return this.getNamespacePriceV1(namespaceID)
+        .then((namespacePriceSatoshis) => {
+          if (!namespacePriceSatoshis) {
+            throw new Error(`Failed to get price for ${namespaceID}`);
+          }
+          return {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(namespacePriceSatoshis))
+          };
+        });
+    });
+  }
+
+  getNamePrice(name: string) {
+    // override with CLI option 
+    if (this.priceUnits) {
+      return new Promise((resolve) => resolve({
+        units: String(this.priceUnits),
+        amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
+      }));
+    }
+    return this.getNamePriceCompat(name);
+  }
+
+  getNamespacePrice(namespaceID: string) {
+    // override with CLI option 
+    if (this.priceUnits) {
+      return new Promise((resolve) => resolve({
+        units: String(this.priceUnits),
+        amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
+      }));
+    }
+    return this.getNamespacePriceCompat(namespaceID);
+  }
+
   getNamespaceBurnAddress(namespaceID: string) {
+    // override with CLI option
     if (this.namespaceBurnAddress) {
       return new Promise((resolve) => resolve(this.namespaceBurnAddress));
     }
@@ -46,6 +191,7 @@ export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
   }
 
   getZonefile(zonefileHash: string) {
+    // mask 404's by returning null
     return super.getZonefile(zonefileHash)
       .then((zonefile) => zonefile)
       .catch((e) => {
@@ -135,6 +281,63 @@ export class CLIRegtestNetworkAdapter extends blockstack.network.LocalRegtest {
         }
         return fixedHistory;
       });
+  }
+
+  getAccountHistoryPage(address: string,
+                        startBlockHeight: number,
+                        endBlockHeight: number,
+                        page: number) : Promise<*> {
+    // TODO: consider moving this to blockstack.js
+    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/` +
+                          `${startBlockHeight}-${endBlockHeight}?page=${page}`;
+    return fetch(url)
+      .then(resp => resp.json())
+      .then((historyList) => {
+        // coerse all addresses 
+        return historyList.map((histEntry) => {
+          histEntry.address = this.coerceAddress(histEntry.address);
+          return histEntry;
+        });
+      });
+  }
+
+  getAccountAt(address: string, blockHeight: number) : Promise<*> {
+    // TODO: consider moving this to blockstack.js
+    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/${blockHeight}`;
+    return fetch(url)
+      .then(resp => resp.json())
+      .then((historyList) => {
+        // coerce all addresses 
+        return historyList.map((histEntry) => {
+          histEntry.address = this.coerceAddress(histEntry.address);
+          return histEntry;
+        });
+      });
+  }
+
+  getAccountTokens(address: string) : Promise<*> {
+    // TODO: send to blockstack.js 
+    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/tokens`)
+      .then(resp => {
+        if (resp.status === 200) {
+          return resp.json().then(tokenList => tokenList.tokens)
+        } else {
+          throw new Error(`Bad response status: ${resp.status}`)
+        }
+      })
+  }
+
+  getAccountBalance(address: string, tokenType: string) : Promise<*> {
+    // TODO: send to blockstack.js 
+    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/balance`)
+      .then((resp) => {
+        if (resp.status === 200) {
+          return resp.json()
+            .then((tokenBalance) => bigi.fromByteArrayUnsigned(tokenBalance.balance))
+        } else {
+          throw new Error(`Bad response status: ${resp.status}`)
+        }
+      })
   }
 }
 
