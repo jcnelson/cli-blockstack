@@ -5,6 +5,7 @@ import process from 'process';
 import bitcoinjs from 'bitcoinjs-lib';
 import ecurve from 'ecurve';
 import fs from 'fs';
+const bigi = require('bigi')
 const URL = require('url')
 
 import {
@@ -35,7 +36,7 @@ import {
 } from './argparse';
 
 import {
-  CLIRegtestNetworkAdapter,
+  CLINetworkAdapter,
   getNetwork
 } from './network';
 
@@ -45,6 +46,20 @@ let estimateOnly = false;
 let safetyChecks = true;
 
 const BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
+
+/*
+ * JSON stringify helper
+ * -- if stdout is a TTY, then pretty-format the JSON
+ * -- otherwise, print it all on one line to make it easy for programs to consume
+ */
+function JSONStringify(obj: any, stderr: boolean = false) : string {
+  if ((!stderr && process.stdout.isTTY) || (stderr && process.stderr.isTTY)) {
+    return JSON.stringify(obj, null, 2);
+  }
+  else {
+    return JSON.stringify(obj);
+  }
+}
 
 /*
  * Get a private key's address.  Honor the 01 to compress the public key
@@ -101,7 +116,7 @@ function sumUTXOs(utxos: Array<UTXO>) {
 function whois(network: Object, args: Array<string>) {
   const name = args[0];
   return network.getNameInfo(name)
-    .then(nameInfo => JSON.stringify(nameInfo));
+    .then(nameInfo => JSONStringify(nameInfo));
 }
 
 /*
@@ -112,7 +127,20 @@ function whois(network: Object, args: Array<string>) {
 function price(network: Object, args: Array<string>) {
   const name = args[0];
   return network.getNamePrice(name)
-    .then(priceInfo => JSON.stringify(priceInfo));
+    .then(priceInfo => JSONStringify(
+      { units: priceInfo.units, amount: priceInfo.amount.toString() }));
+}
+
+/*
+ * Get a namespace's price information 
+ * args:
+ * @namespaceID (string) the namespace to query
+ */
+function priceNamespace(network: Object, args: Array<string>) {
+  const namespaceID = args[0];
+  return network.getNamespacePrice(namespaceID)
+    .then(priceInfo => JSONStringify(
+      { units: priceInfo.units, amount: priceInfo.amount.toString() }));
 }
 
 /*
@@ -123,7 +151,7 @@ function price(network: Object, args: Array<string>) {
 function names(network: Object, args: Array<string>) {
   const address = args[0];
   return network.getNamesOwned(address)
-    .then(namesList => JSON.stringify(namesList));
+    .then(namesList => JSONStringify(namesList));
 }
 
 /*
@@ -147,7 +175,7 @@ function lookup(network: Object, args: Array<string>) {
         zonefile: zonefile,
         profile: profile
       };
-      return JSON.stringify(ret);
+      return JSONStringify(ret);
     });
 }
 
@@ -162,7 +190,7 @@ function getNameBlockchainRecord(network: Object, args: Array<string>) {
     return network.getBlockchainNameRecord(name);
   })
   .then((nameInfo) => {
-    return JSON.stringify(nameInfo);
+    return JSONStringify(nameInfo);
   });
 }
 
@@ -189,7 +217,7 @@ function getNameHistoryRecord(network: Object, args: Array<string>) {
     return network.getNameHistory(name, startHeight, endHeight);
   })
   .then((nameHistory) => {
-    return JSON.stringify(nameHistory);
+    return JSONStringify(nameHistory);
   });
 }
 
@@ -204,7 +232,7 @@ function getNamespaceBlockchainRecord(network: Object, args: Array<string>) {
     return network.getNamespaceInfo(namespaceID);
   })
   .then((namespaceInfo) => {
-    return JSON.stringify(namespaceInfo);
+    return JSONStringify(namespaceInfo);
   });
 }
 
@@ -273,25 +301,33 @@ function txPreorder(network: Object, args: Array<string>) {
         network.coerceAddress(address)),
       blockstack.safety.isInGracePeriod(name),
       paymentBalance,
-      estimatePromise
+      estimatePromise,
+      network.getNamePrice(name),
+      network.getAccountBalance(paymentAddress, 'STACKS'),
     ])
     .then(([isNameValid, isNameAvailable, addressCanReceiveName, 
-            isInGracePeriod, paymentBalance, estimate]) => {
+            isInGracePeriod, paymentBalance, estimate,
+            namePrice, STACKSBalance]) => {
       if (isNameValid && isNameAvailable && addressCanReceiveName &&
-          !isInGracePeriod && paymentBalance >= estimate) {
+          !isInGracePeriod && paymentBalance >= estimate &&
+          (namePrice.units === 'BTC' || (namePrice.units == 'STACKS'
+           && namePrice.amount.compareTo(STACKSBalance) < 0))) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely preordered',
           'isNameValid': isNameValid,
           'isNameAvailable': isNameAvailable,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod,
-          'paymentBalance': paymentBalance,
-          'estimateCost': estimate
-        }));
+          'paymentBalanceBTC': paymentBalance,
+          'paymentBalanceStacks': STACKSBalance.toString(),
+          'nameCostUnits': namePrice.units,
+          'nameCostAmount': namePrice.amount.toString(),
+          'estimateCostBTC': estimate
+        }, true ));
       }
     });
 
@@ -380,7 +416,7 @@ function txRegister(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
  
@@ -389,23 +425,27 @@ function txRegister(network: Object, args: Array<string>) {
       blockstack.safety.isNameAvailable(name),
       blockstack.safety.addressCanReceiveName(
         network.coerceAddress(address)),
-      blockstack.safety.isInGracePeriod(name)
+      blockstack.safety.isInGracePeriod(name),
+      paymentBalancePromise,
+      estimatePromise,
     ])
     .then(([isNameValid, isNameAvailable, 
-            addressCanReceiveName, isInGracePeriod]) => {
+            addressCanReceiveName, isInGracePeriod, paymentBalance, estimateCost]) => {
       if (isNameValid && isNameAvailable && addressCanReceiveName && 
-          !isInGracePeriod) {
+          !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely registered',
           'isNameValid': isNameValid,
           'isNameAvailable': isNameAvailable,
           'addressCanReceiveName': addressCanReceiveName,
-          'isInGracePeriod': isInGracePeriod
-        }));
+          'isInGracePeriod': isInGracePeriod,
+          'paymentBalanceBTC': paymentBalance,
+          'estimateCostBTC': estimateCost,
+        }, true ));
       }
     });
   
@@ -486,27 +526,31 @@ function update(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
  
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
-      blockstack.safety.isInGracePeriod(name)
+      blockstack.safety.isInGracePeriod(name),
+      estimatePromise,
+      paymentBalancePromise
     ])
-    .then(([isNameValid, ownsName, isInGracePeriod]) => {
-      if (isNameValid && ownsName && !isInGracePeriod) {
+    .then(([isNameValid, ownsName, isInGracePeriod, estimateCost, paymentBalance]) => {
+      if (isNameValid && ownsName && !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely updated',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
-          'isInGracePeriod': isInGracePeriod
-        }));
+          'isInGracePeriod': isInGracePeriod,
+          'estimateCostBTC': estimateCost,
+          'paymentBalanceBTC': paymentBalance,
+        }, true ));
       }
     });
 
@@ -581,7 +625,7 @@ function transfer(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
   
@@ -589,23 +633,27 @@ function transfer(network: Object, args: Array<string>) {
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
       blockstack.safety.addressCanReceiveName(network.coerceAddress(address)),
-      blockstack.safety.isInGracePeriod(name)
+      blockstack.safety.isInGracePeriod(name),
+      paymentBalancePromise,
+      estimatePromise,
     ])
     .then(([isNameValid, ownsName, addressCanReceiveName, 
-            isInGracePeriod]) => {
+            isInGracePeriod, paymentBalance, estimateCost]) => {
       if (isNameValid && ownsName && addressCanReceiveName &&
-          !isInGracePeriod) {
+          !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely transferred',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
           'addressCanReceiveName': addressCanReceiveName,
-          'isInGracePeriod': isInGracePeriod
-        }));
+          'isInGracePeriod': isInGracePeriod,
+          'estimateCostBTC': estimateCost,
+          'paymentBalanceBTC': paymentBalance,
+        }, true ));
       }
     });
 
@@ -727,28 +775,49 @@ function renew(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
+  });
+
+  const canReceiveNamePromise = Promise.resolve().then(() => {
+    if (newAddress) {
+      return blockstack.safety.addressCanReceiveName(network.coerceAddress(newAddress));
+    }
+    else {
+      return true;
+    }
   });
 
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
-      newAddress !== null ? blockstack.safety.addressCanReceiveName(
-        network.coerceAddress(newAddress)) : true,
+      canReceiveNamePromise,
+      network.getNamePrice(name),
+      network.getAccountBalance(paymentAddress, 'STACKS'),
+      estimatePromise,
+      paymentBalancePromise,
     ])
-    .then(([isNameValid, ownsName, addressCanReceiveName]) => {
-      if (isNameValid && ownsName && addressCanReceiveName) {
+    .then(([isNameValid, ownsName, addressCanReceiveName, nameCost, 
+           accountBalance, estimateCost, paymentBalance]) => {
+      if (isNameValid && ownsName && addressCanReceiveName && 
+          (nameCost.units === 'BTC' || (nameCost.units == 'STACKS' &&
+           nameCost.amount.compareTo(accountBalance) < 0)) &&
+          estimateCost < paymentBalance) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely renewed',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
-          'addressCanReceiveName': addressCanReceiveName
-        }));
+          'addressCanReceiveName': addressCanReceiveName,
+          'estimateCostBTC': estimateCost,
+          'nameCostUnits': nameCost.units,
+          'nameCostAmount': nameCost.amount.toString(),
+          'paymentBalanceBTC': paymentBalance,
+          'paymentBalanceStacks': accountBalance.amount.toString()
+        }, true ));
       }
     });
 
@@ -818,27 +887,31 @@ function revoke(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
  
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
-      blockstack.safety.isInGracePeriod(name)
+      blockstack.safety.isInGracePeriod(name),
+      estimatePromise,
+      paymentBalancePromise
     ])
-    .then(([isNameValid, ownsName, isInGracePeriod]) => {
-      if (isNameValid && ownsName && !isInGracePeriod) {
+    .then(([isNameValid, ownsName, isInGracePeriod, estimateCost, paymentBalance]) => {
+      if (isNameValid && ownsName && !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safely revoked',
           'isNameValid': isNameValid,
           'ownsName': ownsName,
-          'isInGracePeriod': isInGracePeriod
-        }));
+          'isInGracePeriod': isInGracePeriod,
+          'estimateCostBTC': estimateCost,
+          'paymentBalanceBTC': paymentBalance,
+        }, true));
       }
     });
 
@@ -924,14 +997,17 @@ function namespacePreorder(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Namespace cannot be safely preordered',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
-          'paymentBalance': paymentBalance,
-          'estimateCost': estimate,
-        }));
+          'paymentBalanceBTC': paymentBalance,
+          'paymentBalanceStacks': STACKSBalance.toString(),
+          'namespaceCostUnits': namespacePrice.units,
+          'namespaceCostAmount': namespacePrice.amount.toString(),
+          'estimateCostBTC': estimate,
+        }, true));
       }
     });
 
@@ -1023,14 +1099,14 @@ function namespaceReveal(network: Object, args: Array<string>) {
     }
   }
 
-  const paymentBalance = paymentUTXOsPromise.then((utxos) => {
+  const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
  
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNamespaceValid(namespaceID),
       blockstack.safety.isNamespaceAvailable(namespaceID),
-      paymentBalance,
+      paymentBalancePromise,
       estimatePromise
     ])
     .then(([isNamespaceValid, isNamespaceAvailable,
@@ -1041,14 +1117,14 @@ function namespaceReveal(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Namespace cannot be safely revealed',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceAvailable': isNamespaceAvailable,
-          'paymentBalance': paymentBalance,
-          'estimateCost': estimate,
-        }));
+          'paymentBalanceBTC': paymentBalance,
+          'estimateCostBTC': estimate,
+        }, true));
       }
     });
   
@@ -1109,7 +1185,7 @@ function namespaceReady(network: Object, args: Array<string>) {
     }
   }
 
-  const revealBalance = revealUTXOsPromise.then((utxos) => {
+  const revealBalancePromise = revealUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
 
@@ -1117,7 +1193,7 @@ function namespaceReady(network: Object, args: Array<string>) {
       blockstack.safety.isNamespaceValid(namespaceID),
       blockstack.safety.namespaceIsReady(namespaceID),
       blockstack.safety.revealedNamespace(namespaceID, revealAddress),
-      revealBalance,
+      revealBalancePromise,
       estimatePromise
     ])
     .then(([isNamespaceValid, isNamespaceReady, isRevealer,
@@ -1127,15 +1203,15 @@ function namespaceReady(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Namespace cannot be safely launched',
           'isNamespaceValid': isNamespaceValid,
           'isNamespaceReady': isNamespaceReady,
           'isPrivateKeyRevealer': isRevealer,
-          'revealerBalance': revealerBalance,
-          'estimateCost': estimate
-        }));
+          'revealerBalanceBTC': revealerBalance,
+          'estimateCostBTC': estimate
+        }, true));
       }
     });
 
@@ -1182,7 +1258,7 @@ function nameImport(network: Object, args: Array<string>) {
   const estimatePromise = importUTXOsPromise.then((utxos) => {
         const numUTXOs = utxos.length;
         return blockstack.transactions.estimateNameImport(
-          name, recipientAddr, zonefileHash);
+          name, recipientAddr, zonefileHash, numUTXOs);
       });
 
   if (estimateOnly) {
@@ -1219,15 +1295,15 @@ function nameImport(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Name cannot be safetly imported',
           'isNamespaceReady': isNamespaceReady,
           'isNamespaceRevealed': isNamespaceRevealed,
           'addressCanReceiveName': addressCanReceive,
-          'importBalance': importBalance,
-          'estimateCost': estimate
-        }));
+          'importBalanceBTC': importBalance,
+          'estimateCostBTC': estimate
+        }, true));
       }
   });
 
@@ -1268,9 +1344,9 @@ function announce(network: Object, args: Array<string>) {
   const senderUTXOsPromise = network.getUTXOs(senderAddress);
 
   const estimatePromise = senderUTXOsPromise.then((utxos) => {
-        const numUTXOs = utxos.length;
-        return blockstack.transactions.estimateAnnounce(messageHash)
-      });
+    const numUTXOs = utxos.length;
+    return blockstack.transactions.estimateAnnounce(messageHash, numUTXOs)
+  });
 
   if (estimateOnly) {
     return estimatePromise;
@@ -1299,12 +1375,12 @@ function announce(network: Object, args: Array<string>) {
         return {'status': true};
       }
       else {
-        throw new Error(JSON.stringify({
+        throw new Error(JSONStringify({
           'status': false,
           'error': 'Announcement cannot be safely sent',
-          'senderBalance': senderBalance,
-          'estimateCost': estimate
-        }));
+          'senderBalanceBTC': senderBalance,
+          'estimateCostBTC': estimate
+        }, true));
       }
   });
 
@@ -1340,7 +1416,7 @@ function profileSign(network: Object, args: Array<string>) {
     const signedToken = blockstack.signProfileToken(profileData, privateKey);
     const wrappedToken = blockstack.wrapProfileToken(signedToken);
     const tokenRecords = [wrappedToken];
-    return JSON.stringify(tokenRecords);
+    return JSONStringify(tokenRecords);
   });
 }
 
@@ -1377,7 +1453,7 @@ function profileVerify(network: Object, args: Array<string>) {
     }
    
     const profile = blockstack.extractProfile(profileToken, publicKeyOrAddress);
-    return JSON.stringify(profile);
+    return JSONStringify(profile);
   });
 }
 
@@ -1465,7 +1541,7 @@ function profileStore(network: Object, args: Array<string>) {
 
       return Promise.all(uploadPromises)
         .then((publicUrls) => {
-          return JSON.stringify({ 'profileUrls': publicUrls });
+          return JSONStringify({ 'profileUrls': publicUrls });
         });
     });
 }
@@ -1486,7 +1562,7 @@ function zonefilePush(network: Object, args: Array<string>) {
 
   return network.putZonefile(zonefileData)
     .then((result) => {
-      return JSON.stringify(result);
+      return JSONStringify(result);
     });
 }
 
@@ -1508,7 +1584,7 @@ function getOwnerKeys(network: Object, args: Array<string>) {
     keyInfo.push(getOwnerKeyInfo(mnemonic, i));
   }
   
-  return Promise.resolve().then(() => JSON.stringify(keyInfo));
+  return Promise.resolve().then(() => JSONStringify(keyInfo));
 }
 
 /*
@@ -1522,15 +1598,190 @@ function getPaymentKey(network: Object, args: Array<string>) {
   // keep the return value consistent with getOwnerKeys 
   let keyInfo = [];
   keyInfo.push(getPaymentKeyInfo(mnemonic));
-  return Promise.resolve().then(() => JSON.stringify(keyInfo));
+  return Promise.resolve().then(() => JSONStringify(keyInfo));
 }
 
+/*
+ * Get an address's tokens and their balances
+ * args:
+ * @address (string) the balances
+ */
+function balance(network: Object, args: Array<string>) {
+  const address = args[0];
+
+  return Promise.resolve().then(() => {
+    return network.getAccountTokens(address);
+  })
+  .then((tokenList) => {
+    const tokenAndBTC = tokenList;
+    tokenAndBTC.push('BTC');
+
+    return Promise.all(tokenAndBTC.map((tokenType) => {
+      if (tokenType === 'BTC') {
+        return Promise.resolve().then(() => {
+          return network.getUTXOs(address);
+        })
+        .then((utxoList) => {
+          return {
+            'token': 'BTC',
+            'amount': `${sumUTXOs(utxoList)}`
+          };
+        });
+      }
+      else {
+        return Promise.resolve().then(() => {
+          return network.getAccountBalance(address, tokenType)
+        })
+        .then((tokenBalance) => {
+          return {
+            'token': tokenType,
+            'amount': tokenBalance.toString()
+          };
+        });
+      }
+    }));
+  })
+  .then((tokenBalances) => {
+    let ret = {};
+    for (let tokenInfo of tokenBalances) {
+      ret[tokenInfo.token] = tokenInfo.amount;
+    }
+    return JSONStringify(ret);
+  });
+}
+
+/*
+ * Get a page of the account's history
+ * args:
+ * @address (string) the account address
+ * @startBlockHeight (int) start of the block height range to query
+ * @endBlockHeight (int) end of the block height range to query
+ * @page (int) the page of the history to fetch
+ */
+function getAccountHistory(network: Object, args: Array<string>) {
+  const address = args[0];
+  const startBlockHeight = parseInt(args[1]);
+  const endBlockHeight = parseInt(args[2]);
+  const page = parseInt(args[3]);
+
+  return Promise.resolve().then(() => {
+    return network.getAccountHistoryPage(address, startBlockHeight, endBlockHeight, page);
+  })
+  .then(history => JSONStringify(history));
+}
+
+/*
+ * Get the account's state(s) at a particular block height
+ * args:
+ * @address (string) the account address
+ * @blockHeight (int) the height at which to query
+ */
+function getAccountAt(network: Object, args: Array<string>) {
+  const address = args[0];
+  const blockHeight = parseInt(args[1]);
+
+  return Promise.resolve().then(() => {
+    return network.getAccountAt(address, blockHeight);
+  })
+  .then(history => JSONStringify(history));
+}
+
+/*
+ * Send tokens from one account private key to another account's address.
+ * args:
+ * @recipientAddress (string) the recipient's account address
+ * @tokenType (string) the type of tokens to send
+ * @tokenAmount (int) the number of tokens to send
+ * @privateKey (string) the hex-encoded private key to use to send the tokens
+ * @memo (string) OPTIONAL: a 34-byte memo to include
+ */
+function sendTokens(network: Object, args: Array<string>) {
+  const recipientAddress = args[0];
+  const tokenType = args[1];
+  const tokenAmount = bigi.fromByteArrayUnsigned(args[2]);
+  const privateKey = args[3];
+  let memo = null;
+
+  if (args.length > 4) {
+    memo = args[4];
+  }
+  const senderAddress = getPrivateKeyAddress(network, privateKey);
+  const senderUTXOsPromise = network.getUTXOs(senderAddress);
+
+  const txPromise = blockstack.transactions.makeTokenTransfer(
+    recipientAddress, tokenType, tokenAmount, memo, privateKey);
+
+  const estimatePromise = senderUTXOsPromise.then((utxos) => {
+    const numUTXOs = utxos.length;
+    return blockstack.transactions.estimateTokenTransfer(
+      recipientAddress, tokenType, tokenAmount, memo, numUTXOs);
+  });
+
+  if (estimateOnly) {
+    return estimatePromise;
+  }
+
+  if (!safetyChecks) {
+    if (txOnly) {
+      return txPromise;
+    }
+    else {
+      return txPromise.then((tx) => {
+        return network.broadcastTransaction(tx);
+      });
+    }
+  }
+
+  const btcBalancePromise = senderUTXOsPromise.then((utxos) => {
+    return sumUTXOs(utxos);
+  });
+
+  const tokenBalancePromise = network.getAccountBalance(senderAddress, tokenType);
+
+  const safetyChecksPromise = Promise.all(
+    [tokenBalancePromise, estimatePromise, btcBalancePromise])
+    .then(([tokenBalance, estimate, btcBalance]) => {
+      if (btcBalance >= estimate && tokenBalance.compareTo(tokenAmount) >= 0) {
+        return {'status': true};
+      }
+      else {
+        throw new Error(JSONStringify({
+          'status': false,
+          'error': 'TokenTransfer cannot be safely sent',
+          'senderBalanceBTC': btcBalance,
+          'estimateCostBTC': estimate,
+          'tokenBalance': tokenBalance.toString(),
+        }, true));
+      }
+  });
+
+  return safetyChecksPromise
+    .then((safetyChecksResult) => {
+      if (!safetyChecksResult.status) {
+        return new Promise((resolve) => resolve(safetyChecksResult));
+      }
+      
+      if (txOnly) {
+        return txPromise;
+      }
+
+      return txPromise.then((tx) => {
+        return network.broadcastTransaction(tx);
+      })
+      .then((txidHex) => {
+        return txidHex;
+      });
+    });
+}
 
 /*
  * Global set of commands
  */
 const COMMANDS = {
   'announce': announce,
+  'balance': balance,
+  'get_account_at': getAccountAt,
+  'get_account_history': getAccountHistory,
   'get_blockchain_record': getNameBlockchainRecord,
   'get_blockchain_history': getNameHistoryRecord,
   'get_zonefile': getNameZonefile,
@@ -1544,12 +1795,14 @@ const COMMANDS = {
   'namespace_reveal': namespaceReveal,
   'namespace_ready': namespaceReady,
   'price': price,
+  'price_namespace': priceNamespace,
   'profile_sign': profileSign,
   'profile_store': profileStore,
   'profile_verify': profileVerify,
   'register': register,
   'renew': renew,
   'revoke': revoke,
+  'send_tokens': sendTokens,
   'transfer': transfer,
   'tx_preorder': txPreorder,
   'tx_register': txRegister,
@@ -1583,14 +1836,16 @@ export function CLIMain() {
       (testnet ? DEFAULT_CONFIG_REGTEST_PATH : DEFAULT_CONFIG_PATH);
     const namespaceBurnAddr = opts['B'];
     const feeRate = opts['F'];
+    const priceToPay = opts['P'];
+    const priceUnits = opts['D'];
 
     const configData = loadConfig(configPath, testnet);
-    let blockstackNetwork = getNetwork(configData, (BLOCKSTACK_TEST || testnet));
-    if (BLOCKSTACK_TEST || testnet) {
-      // wrap command-line options
-      blockstackNetwork = new CLIRegtestNetworkAdapter(
-        blockstackNetwork, consensusHash, feeRate, namespaceBurnAddr);
-    }
+    let blockstackNetwork = getNetwork(configData, (!!BLOCKSTACK_TEST || !!testnet));
+      
+    // wrap command-line options
+    blockstackNetwork = new CLINetworkAdapter(
+        blockstackNetwork, consensusHash, feeRate, namespaceBurnAddr,
+        priceToPay, priceUnits);
 
     blockstack.config.network = blockstackNetwork;
 
