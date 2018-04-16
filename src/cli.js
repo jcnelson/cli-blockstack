@@ -1700,11 +1700,12 @@ function sendTokens(network: Object, args: Array<string>) {
   const tokenType = args[1];
   const tokenAmount = bigi.fromByteArrayUnsigned(args[2]);
   const privateKey = args[3];
-  let memo = null;
+  let memo = "";
 
   if (args.length > 4) {
     memo = args[4];
   }
+
   const senderAddress = getPrivateKeyAddress(network, privateKey);
   const senderUTXOsPromise = network.getUTXOs(senderAddress);
 
