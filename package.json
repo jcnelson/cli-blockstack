@@ -94,12 +94,12 @@
     "tape-promise": "^2.0.1"
   },
   "dependencies": {
-    "blockstack": "^0.16.1",
+    "blockstack": "^0.17.2",
     "minimist": "^1.2.0",
     "ajv": "^4.11.5",
     "bigi": "^1.4.2",
     "bip39": "^2.5.0",
-    "bitcoinjs-lib": "^2.3.0",
+    "bitcoinjs-lib": "^3.3.0",
     "blockstack-keychains": "^0.0.8",
     "ecurve": "^1.0.6",
     "elliptic": "^6.4.0",
