@@ -85,6 +85,13 @@ function coerceMainnetAddress(address: string) : string {
 }
 
 /*
+ * Is a name a sponsored name (a subdomain)?
+ */
+function isSubdomain(name: string) : boolean {
+  return !!name.match(/^[^\.]+\.[^.]+\.[^.]+$/);
+}
+
+/*
  * Get the canonical form of a hex-encoded private key
  * (i.e. strip the trailing '01' if present)
  */
@@ -116,7 +123,29 @@ function sumUTXOs(utxos: Array<UTXO>) {
 function whois(network: Object, args: Array<string>) {
   const name = args[0];
   return network.getNameInfo(name)
-    .then(nameInfo => JSONStringify(nameInfo));
+    .then((nameInfo) => {
+      if (BLOCKSTACK_TEST) {
+        // the test framework expects a few more fields.
+        // these are for compatibility with the old CLI.
+        // you are not required to understand these.
+        return Object.assign({}, nameInfo, {
+          'owner_address': nameInfo.address,
+          'owner_script': bitcoinjs.address.toOutputScript(
+            coerceMainnetAddress(nameInfo.address)).toString('hex'),
+          'renewal_deadline': nameInfo.expire_block > 0 ?
+                nameInfo.expire_block + 
+                  parseInt(
+                    process.env.BLOCKSTACK_EPOCH_3_NAMESPACE_LIFETIME_GRACE_PERIOD ?
+                    process.env.BLOCKSTACK_EPOCH_3_NAMESPACE_LIFETIME_GRACE_PERIOD :
+                    "0")
+                : -1
+        });
+      }
+      else {
+        return nameInfo;
+      }
+    })
+    .then(whoisInfo => JSONStringify(whoisInfo));
 }
 
 /*
@@ -255,8 +284,9 @@ function getNameZonefile(network: Object, args: Array<string>) {
  * @name (string) the name to preorder
  * @address (string) the address to own the name
  * @paymentKey (string) the payment private key
+ * @preorderTxOnly (boolean) OPTIONAL: used internally to only return a tx (overrides CLI)
  */
-function txPreorder(network: Object, args: Array<string>) {
+function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boolean = false) {
   const name = args[0];
   const address = args[1];
   const paymentKey = args[2];
@@ -279,7 +309,7 @@ function txPreorder(network: Object, args: Array<string>) {
   }
   
   if (!safetyChecks) {
-    if (txOnly) {
+    if (txOnly || preorderTxOnly) {
       return txPromise;
     }
     else {
@@ -311,7 +341,7 @@ function txPreorder(network: Object, args: Array<string>) {
       if (isNameValid && isNameAvailable && addressCanReceiveName &&
           !isInGracePeriod && paymentBalance >= estimate &&
           (namePrice.units === 'BTC' || (namePrice.units == 'STACKS'
-           && namePrice.amount.compareTo(STACKSBalance) < 0))) {
+           && namePrice.amount.compareTo(STACKSBalance) <= 0))) {
         return {'status': true};
       }
       else {
@@ -337,7 +367,7 @@ function txPreorder(network: Object, args: Array<string>) {
         return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
-      if (txOnly) {
+      if (txOnly || preorderTxOnly) {
         return txPromise;
       }
 
@@ -350,14 +380,6 @@ function txPreorder(network: Object, args: Array<string>) {
     });
 }
 
-/*
- * Register a name the easy way.  Send the preorder
- * and register transactions to the broadcaster, as 
- * well as the zone file if given.
- */
-function register(network: Object, args: Array<string>) {
-  throw new Error("Not implemented yet");
-}
 
 /*
  * Generate and optionally send a name-register
@@ -365,26 +387,32 @@ function register(network: Object, args: Array<string>) {
  * @name (string) the name to register
  * @address (string) the address that owns this name
  * @paymentKey (string) the payment private key
- * @zonefile (string) if given, the zone file text to use
+ * @zonefile (string) if given, the path to the zone file data to use
  * @zonefileHash (string) if given, this is the raw zone file hash to use
  *  (in which case, @zonefile will be ignored)
+ * @registerTxOnly (boolean) OPTIONAL: used internally to coerce returning only the tx
  */
-function txRegister(network: Object, args: Array<string>) {
+function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boolean = false) {
   const name = args[0];
   const address = args[1];
   const paymentKey = args[2];
-  let zonefile = null;
+  let zonefilePath = null;
   let zonefileHash = null;
+  let zonefile = null;
 
   if (args.length > 3) {
-    zonefile = args[3];
+    zonefilePath = args[3];
   }
 
   if (args.length > 4) {
     zonefileHash = args[4];
-    zonefile = null;
+    zonefilePath = null;
 
     console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+  }
+
+  if (!!zonefilePath) {
+    zonefile = fs.readFileSync(zonefilePath).toString();
   }
 
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
@@ -405,7 +433,7 @@ function txRegister(network: Object, args: Array<string>) {
   }
  
   if (!safetyChecks) {
-    if (txOnly) {
+    if (txOnly || registerTxOnly) {
       return txPromise;
     }
     else {
@@ -455,7 +483,7 @@ function txRegister(network: Object, args: Array<string>) {
         return new Promise((resolve) => resolve(safetyChecksResult));
       }
 
-      if (txOnly) {
+      if (txOnly || registerTxOnly) {
         return txPromise;
       }
 
@@ -697,18 +725,18 @@ function renew(network: Object, args: Array<string>) {
   let zonefile = null;
   let zonefileHash = null;
 
-  if (args.length <= 3) {
-    newAddress = getPrivateKeyAddress(network, ownerKey);
-  }
-  else {
+  if (args.length >= 4) {
     newAddress = args[3];
   }
+  else {
+    newAddress = getPrivateKeyAddress(network, ownerKey);
+  }
 
-  if (args.length <= 5) {
+  if (args.length >= 5) {
     zonefile = args[4];
   }
 
-  if (args.length <= 6) {
+  if (args.length >= 6) {
     zonefileHash = args[5];
     zonefile = null;
     console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
@@ -729,7 +757,7 @@ function renew(network: Object, args: Array<string>) {
           numOwnerUTXOs + numPaymentUTXOs - 1);
       });
 
-  const zonefilePromise = new Promise((resolve) => {
+  const zonefilePromise = new Promise((resolve, reject) => {
     if (!!zonefile) {
       resolve(zonefile);
     } else if (!!zonefileHash) {
@@ -742,12 +770,14 @@ function renew(network: Object, args: Array<string>) {
             return network.getZonefile(nameInfo.zonefile_hash)
               .then((zonefileData) => {
                 resolve(zonefileData);
-              });
+              })
+              .catch((zonefileNetworkError) => reject(zonefileNetworkError));
           } else {
             // give an empty zonefile 
             resolve(null);
           };
-        });
+        })
+        .catch((nameNetworkError) => reject(nameNetworkError));
     }
   })
   .catch((e) => {
@@ -801,7 +831,7 @@ function renew(network: Object, args: Array<string>) {
            accountBalance, estimateCost, paymentBalance]) => {
       if (isNameValid && ownsName && addressCanReceiveName && 
           (nameCost.units === 'BTC' || (nameCost.units == 'STACKS' &&
-           nameCost.amount.compareTo(accountBalance) < 0)) &&
+           nameCost.amount.compareTo(accountBalance) <= 0)) &&
           estimateCost < paymentBalance) {
         return {'status': true};
       }
@@ -992,7 +1022,7 @@ function namespacePreorder(network: Object, args: Array<string>) {
       if (isNamespaceValid && isNamespaceAvailable && 
           (namespacePrice.units === 'BTC' || 
             (namespacePrice.units === 'STACKS' && 
-             namespacePrice.amount.compareTo(STACKSBalance) < 0)) &&
+             namespacePrice.amount.compareTo(STACKSBalance) <= 0)) &&
           paymentBalance >= estimate) {
         return {'status': true};
       }
@@ -1059,16 +1089,15 @@ function namespaceReveal(network: Object, args: Array<string>) {
   const buckets = bucketString.split(',')
     .map((x) => {return parseInt(x)});
 
-  const namespace = new blockstack.transactions.BlockstackNamespace(
-    namespaceID)
+  const namespace = new blockstack.transactions.BlockstackNamespace(namespaceID);
 
-  namespace.setVersion(version)
-  namespace.setLifetime(lifetime)
-  namespace.setCoeff(coeff)
-  namespace.setBase(base)
-  namespace.setBuckets(buckets)
-  namespace.setNonalphaDiscount(nonalphaDiscount)
-  namespace.setNoVowelDiscount(noVowelDiscount)
+  namespace.setVersion(version);
+  namespace.setLifetime(lifetime);
+  namespace.setCoeff(coeff);
+  namespace.setBase(base);
+  namespace.setBuckets(buckets);
+  namespace.setNonalphaDiscount(nonalphaDiscount);
+  namespace.setNoVowelDiscount(noVowelDiscount);
 
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
   const paymentUTXOsPromise = network.getUTXOs(paymentAddress);
@@ -1404,6 +1433,80 @@ function announce(network: Object, args: Array<string>) {
 }
 
 /*
+ * Register a name the easy way.  Send the preorder
+ * and register transactions to the broadcaster, as 
+ * well as the zone file.
+ * @arg name (string) the name to register
+ * @arg address (string) the address to own it
+ * @arg zonefile (string) the path to the zone file to give this name
+ * @arg paymentKey (string) the hex-encoded payment key to purchase this name
+ */
+function register(network: Object, args: Array<string>) {
+  const name = args[0];
+  const address = args[1];
+  const zonefilePath = args[2];
+  const paymentKey = args[3];
+  
+  const coercedAddress = network.coerceAddress(address)
+  const zonefile = fs.readFileSync(zonefilePath).toString();
+
+  let preorderTx = "";
+  let registerTx = "";
+
+  // carry out safety checks for preorder and register 
+  const preorderSafetyCheckPromise = txPreorder(
+    network, [name, address, paymentKey], true);
+
+  const registerSafetyCheckPromise = txRegister(
+    network, [name, address, paymentKey, zonefilePath], true);
+
+  return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
+    .then(([preorderSafetyChecks, registerSafetyChecks]) => {
+      // will have only gotten back the raw tx (which we'll discard anyway,
+      // since we have to use the right UTXOs)
+      return blockstack.transactions.makePreorder(name, address, paymentKey);
+    })
+    .then((rawTx) => {
+      preorderTx = rawTx;
+      return rawTx;
+    })
+    .then((rawTx) => {
+      // make it so that when we generate the NAME_REGISTRATION operation,
+      // we consume the change output from the NAME_PREORDER.
+      network.modifyUTXOSetFrom(rawTx);
+      return rawTx;
+    })
+    .then(() => {
+      // now we can make the NAME_REGISTRATION 
+      return blockstack.transactions.makeRegister(name, address, paymentKey, zonefile);
+    })
+    .then((rawTx) => {
+      registerTx = rawTx;
+      return rawTx;
+    })
+    .then((rawTx) => {
+      // make sure we don't double-spend the NAME_REGISTRATION before it is broadcasted
+      network.modifyUTXOSetFrom(rawTx);
+    })
+    .then(() => {
+      if (txOnly) {
+        return Promise.resolve().then(() => { 
+          const txData = {
+            preorder: preorderTx,
+            register: registerTx,
+            zonefile: zonefile,
+          };
+          return txData;   
+        });
+      }
+      else {
+        return network.broadcastNameRegistration(preorderTx, registerTx, zonefile);
+      }
+    });
+}
+
+
+/*
  * Sign a profile.
  * @path (string) path to the profile
  * @privateKey (string) the owner key
@@ -1560,7 +1663,7 @@ function zonefilePush(network: Object, args: Array<string>) {
     zonefileData = zonefileDataOrPath;
   }
 
-  return network.putZonefile(zonefileData)
+  return network.broadcastZoneFile(zonefileData)
     .then((result) => {
       return JSONStringify(result);
     });
@@ -1737,21 +1840,28 @@ function sendTokens(network: Object, args: Array<string>) {
     return sumUTXOs(utxos);
   });
 
+  const accountStatePromise = network.getAccountStatus(senderAddress, tokenType);
   const tokenBalancePromise = network.getAccountBalance(senderAddress, tokenType);
+  const blockHeightPromise = network.getBlockHeight()
 
   const safetyChecksPromise = Promise.all(
-    [tokenBalancePromise, estimatePromise, btcBalancePromise])
-    .then(([tokenBalance, estimate, btcBalance]) => {
-      if (btcBalance >= estimate && tokenBalance.compareTo(tokenAmount) >= 0) {
+    [tokenBalancePromise, estimatePromise, btcBalancePromise,
+      accountStatePromise, blockHeightPromise])
+    .then(([tokenBalance, estimate, btcBalance, 
+      accountState, blockHeight]) => {
+      if (btcBalance >= estimate && tokenBalance.compareTo(tokenAmount) >= 0 &&
+          accountState.lock_transfer_block_id <= blockHeight) {
         return {'status': true};
       }
       else {
         throw new Error(JSONStringify({
           'status': false,
           'error': 'TokenTransfer cannot be safely sent',
+          'lockTransferBlockHeight': accountState.lock_transfer_block_id,
           'senderBalanceBTC': btcBalance,
           'estimateCostBTC': estimate,
           'tokenBalance': tokenBalance.toString(),
+          'blockHeight': blockHeight,
         }, true));
       }
   });
