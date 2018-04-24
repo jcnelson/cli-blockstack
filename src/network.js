@@ -205,31 +205,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       });
   }
 
-  putZonefile(zonefileData: string) : Promise<*> {
-    // TODO: consider moving this to blockstack.js
-    const requestHeaders = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    };
-
-    const options = {
-      method: 'PUT',
-      headers: requestHeaders,
-      body: zonefileData
-    };
-
-    const url = `${this.blockstackAPIUrl}/v1/zonefiles`;
-    return fetch(url, options)
-      .then(resp => {
-        if (resp.status === 200 || resp.status === 202) {
-          return resp.json().then(respJSON => respJSON)
-        }
-        else {
-          throw new Error(`Failed to store zonefile: status code ${resp.status}`);
-        }
-      });
-  }
-
   getBlockchainNameRecord(name: string) : Promise<*> {
     // TODO: consider moving this to blockstack.js
     const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/${name}`;
@@ -283,13 +258,35 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       });
   }
 
+  getAccountStatus(address: string, tokenType: string) : Promise<*> {
+    // TODO: consider moving this to blockstack.js
+    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/status`)
+      .then(resp => {
+        if (resp.status === 404) {
+          throw new Error('Account not found')
+        } else if (resp.status !== 200) {
+          throw new Error(`Bad response status: ${resp.status}`)
+        } else {
+          return resp.json()
+        }
+      })
+      .then(accountStatus => 
+        // coerce all addresses, and convert credit/debit to biginteger
+        Object.assign({}, accountStatus, {
+          address: this.coerceAddress(accountStatus.address),
+          debit_value: bigi.fromByteArrayUnsigned(String(accountStatus.debit_value)),
+          credit_value: bigi.fromByteArrayUnsigned(String(accountStatus.credit_value))
+        })
+      )
+  }
+
   getAccountHistoryPage(address: string,
                         startBlockHeight: number,
                         endBlockHeight: number,
                         page: number) : Promise<*> {
     // TODO: consider moving this to blockstack.js
-    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/` +
-                          `${startBlockHeight}-${endBlockHeight}?page=${page}`;
+    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?` +
+                          `startblock=${startBlockHeight}&endblock=${endBlockHeight}&page=${page}`;
     return fetch(url)
       .then(resp => resp.json())
       .then((historyList) => {
@@ -334,6 +331,9 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         if (resp.status === 200) {
           return resp.json()
             .then((tokenBalance) => bigi.fromByteArrayUnsigned(tokenBalance.balance))
+        } else if (resp.status === 404) {
+          // talking to an older blockstack core node without the accounts API
+          return Promise.resolve().then(() => bigi.fromByteArrayUnsigned('0'))
         } else {
           throw new Error(`Bad response status: ${resp.status}`)
         }
