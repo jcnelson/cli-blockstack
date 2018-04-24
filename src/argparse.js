@@ -728,7 +728,7 @@ Command reference
     balance ADDRESS
                         Get the balances of all of an address's tokens
 
-    get_account_at ADDRESS BLOCK_HEIGHT
+    get_account_at ADDRESS START_BLOCK_HEIGHT END_BLOCK_HEIGHT PAGE
                         Get the state(s) of an account at a particular block height
 
     get_account_history ADDRESS PAGE
