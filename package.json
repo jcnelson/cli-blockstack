@@ -4,7 +4,7 @@
   "description": "Node.js Blockstack CLI",
   "main": "lib/index",
   "scripts": {
-    "browserify": "./node_modules/.bin/browserify lib/index.js --standalone blockstack-cli -o ./dist/blockstack-cli.js",
+    "browserify": "mkdir -p ./dist && ./node_modules/.bin/browserify lib/index.js --standalone blockstack-cli -o ./dist/blockstack-cli.js",
     "browserify-tests": "./node_modules/.bin/browserify lib/index.js --standalone blockstack -o ./tests/browserTests/bundle.js",
     "compile": "rm -rf lib; babel src -d lib",
     "compile-tests": "rm -rf tests/unitTests/lib; babel tests/unitTests/src -d tests/unitTests/lib;",
