@@ -10,12 +10,11 @@
     "compile-tests": "rm -rf tests/unitTests/lib; babel tests/unitTests/src -d tests/unitTests/lib;",
     "prepublish": "npm run build",
     "unit-test": "npm run lint && npm run flow && npm run compile && npm run compile-tests && npm run browserify && node ./tests/unitTests/lib/index.js",
-    "build": "npm run flow && npm run compile && npm run browserify",
+    "build": "npm run flow && npm run compile && npm run browserify && npm run force-executable",
     "flow": "flow || true",
     "lint": "eslint src && eslint tests",
     "test": "nyc --reporter=text npm run unit-test",
-    "documentation": "documentation",
-    "build-documentation": "./node_modules/.bin/documentation build src --config ./documentation.yml --format html --output docs; ./node_modules/.bin/documentation build src --config ./documentation.yml --format json --output docs.json"
+    "force-executable": "test -f ./lib/index.js && chmod +x ./lib/index.js"
   },
   "repository": {
     "type": "git",
