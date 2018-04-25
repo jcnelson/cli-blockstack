@@ -887,7 +887,7 @@ export function loadConfig(configFile: string, regtest: boolean) : Object {
     Object.assign(configRet, configData);
   }
   catch (e) {
-    console.debug(`Failed to load ${configFile}, using defaults`);
+    ;
   }
 
   return configRet;
