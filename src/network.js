@@ -207,7 +207,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
   getBlockchainNameRecord(name: string) : Promise<*> {
     // TODO: consider moving this to blockstack.js
-    const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/${name}`;
+    const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`;
     return fetch(url)
       .then(resp => resp.json())
       .then((nameInfo) => {
@@ -228,10 +228,10 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
     // TODO: consider moving this to blockstack.js
     let url = `${this.blockstackAPIUrl}/v1/names/${name}/history`;
-    if (startHeight !== null) {
+    if (!!startHeight) {
       url += `?start_block=${startHeight}`;
     }
-    if (endHeight !== null) {
+    if (!!endHeight) {
       url += `&end_block=${endHeight}`;
     }
     return fetch(url)
