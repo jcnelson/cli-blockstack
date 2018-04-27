@@ -594,20 +594,27 @@ Options can be:
     -x                  Do not broadcast a transaction.  Only generate and
                         print them to stdout.
 
+    -B BURN_ADDR        Use the given namespace burn address instead of the one
+                        obtained from the Blockstack network (requires -t)
+
+    -D DENOMINATION     Denominate the price to pay in the given units
+                        (requires -t and -P)
+
     -C CONSENSUS_HASH   Use the given consensus hash instead of one obtained
                         from the network (requires -t)
 
     -F FEE_RATE         Use the given transaction fee rate instead of the one
                         obtained from the Bitcoin network (requires -t)
 
-    -B BURN_ADDR        Use the given namespace burn address instead of the one
-                        obtained from the Blockstack network (requires -t)
+    -G GRACE_PERIOD     Number of blocks in which a name can be renewed after it
+                        expires (requires -t)
+
+    -N PAY2NS_PERIOD    Number of blocks in which a namespace receives the registration
+                        and renewal fees after it is created (requires -t)
 
     -P PRICE            Use the given price to pay for names or namespaces
                         (requires -t)
 
-    -D DENOMINATION     Denominate the price to pay in the given units
-                        (requires -t and -P)
 
 Command reference
   Querying Blockstack IDs
@@ -756,7 +763,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'etUxC:F:B:P:D:') : Object {
+                           opts: string = 'etUxC:F:B:P:D:G:N:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);

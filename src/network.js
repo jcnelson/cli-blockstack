@@ -21,10 +21,12 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   namespaceBurnAddress: string | null
   priceToPay: number | null
   priceUnits: string | null
+  gracePeriod: number | null
 
   constructor(network: blockstack.network.BlockstackNetwork, consensusHash: string | null,
               feeRate: number | null, namespaceBurnAddress: string | null,
-              priceToPay: number | null, priceUnits: string | null) {
+              priceToPay: number | null, priceUnits: string | null, 
+              receiveFeesPeriod: number | null, gracePeriod: number | null) {
 
     super(network.blockstackAPIUrl, network.broadcastServiceUrl, network.btc, network.layer1);
     this.consensusHash = consensusHash;
@@ -32,6 +34,8 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     this.namespaceBurnAddress = namespaceBurnAddress
     this.priceToPay = priceToPay
     this.priceUnits = priceUnits
+    this.receiveFeesPeriod = receiveFeesPeriod
+    this.gracePeriod = gracePeriod
   }
 
   isMainnet() : boolean {
@@ -63,7 +67,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   getFeeRate() : Promise<number> {
     if (this.feeRate) {
       // override with CLI option
-      return this.feeRate;
+      return Promise.resolve(this.feeRate);
     }
     if (this.isTestnet()) {
       // in regtest mode 
@@ -78,6 +82,13 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       return new Promise((resolve) => resolve(this.consensusHash));
     }
     return super.getConsensusHash();
+  }
+
+  getGracePeriod() {
+    if (this.gracePeriod) {
+      return this.gracePeriod;
+    }
+    return super.getGracePeriod();
   }
 
   getNamePriceV1(fullyQualifiedName: string) : Promise<*> {
@@ -182,12 +193,36 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     return this.getNamespacePriceCompat(namespaceID);
   }
 
-  getNamespaceBurnAddress(namespaceID: string) {
+  getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
+
+    // TODO: update getNamespaceBurnAddress() to take an optional receive-fees-period
     // override with CLI option
-    if (this.namespaceBurnAddress) {
+    if (this.namespaceBurnAddress && useCLI) {
       return new Promise((resolve) => resolve(this.namespaceBurnAddress));
     }
-    return super.getNamespaceBurnAddress(namespaceID);
+
+    return Promise.all([
+      fetch(`${this.blockstackAPIUrl}/v1/namespaces/${namespace}`),
+      this.getBlockHeight()
+    ])
+    .then(([resp, blockHeight]) => {
+      if (resp.status === 404) {
+        throw new Error(`No such namespace '${namespace}'`)
+      } else {
+        return Promise.all([resp.json(), blockHeight])
+      }
+    })
+    .then(([namespaceInfo, blockHeight]) => {
+      let address = '1111111111111111111114oLvT2' // default burn address
+      if (namespaceInfo.version === 2) {
+        // pay-to-namespace-creator if this namespace is less than $receiveFeesPeriod blocks old
+        if (namespaceInfo.reveal_block + this.receiveFeesPeriod >= blockHeight) {
+          address = namespaceInfo.address
+        }
+      }
+      return address
+    })
+    .then(address => this.coerceAddress(address))
   }
 
   getZonefile(zonefileHash: string) {
@@ -206,7 +241,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getBlockchainNameRecord(name: string) : Promise<*> {
-    // TODO: consider moving this to blockstack.js
+    // TODO: send to blockstack.js 
     const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`;
     return fetch(url)
       .then(resp => resp.json())
@@ -226,7 +261,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
                  startHeight: number | null, 
                  endHeight: number | null) : Promise<*> {
 
-    // TODO: consider moving this to blockstack.js
+    // TODO: send to blockstack.js 
     let url = `${this.blockstackAPIUrl}/v1/names/${name}/history`;
     if (!!startHeight) {
       url += `?start_block=${startHeight}`;
@@ -259,7 +294,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getAccountStatus(address: string, tokenType: string) : Promise<*> {
-    // TODO: consider moving this to blockstack.js
+    // TODO: send to blockstack.js 
     return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/status`)
       .then(resp => {
         if (resp.status === 404) {
@@ -284,7 +319,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
                         startBlockHeight: number,
                         endBlockHeight: number,
                         page: number) : Promise<*> {
-    // TODO: consider moving this to blockstack.js
+    // TODO: send to blockstack.js 
     const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?` +
                           `startblock=${startBlockHeight}&endblock=${endBlockHeight}&page=${page}`;
     return fetch(url)
@@ -299,7 +334,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getAccountAt(address: string, blockHeight: number) : Promise<*> {
-    // TODO: consider moving this to blockstack.js
+    // TODO: send to blockstack.js 
     const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/${blockHeight}`;
     return fetch(url)
       .then(resp => resp.json())

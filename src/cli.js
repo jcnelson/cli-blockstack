@@ -44,8 +44,10 @@ import {
 let txOnly = false;
 let estimateOnly = false;
 let safetyChecks = true;
+let receiveFeesPeriod = 52595;
+let gracePeriod = 5000;
 
-const BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
+let BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
 
 /*
  * JSON stringify helper
@@ -124,8 +126,28 @@ function sumUTXOs(utxos: Array<UTXO>) {
  * @return whether or not the name will be available
  */
 function isNameAvailableAt(nameInfo: Object, blockHeight: number) : boolean {
+  return false;
+  /*
   return (nameInfo.expire_block > 0 && nameInfo.renewal_deadline > 0 &&
-          nameInfo.renewal_deadline <= blockHeight);
+          nameInfo.renewal_deadline < blockHeight);
+  */
+}
+
+/*
+ * Easier-to-use getNameInfo.  Returns null if the name does not exist.
+ */
+function getNameInfo(network: Object, name: string) : Promise<*> {
+  const nameInfoPromise = network.getNameInfo(name)
+    .then(nameInfo => nameInfo)
+    .catch((error) => {
+      if (error.message === 'Name not found') {
+        return null;
+      } else {
+        throw error;
+      }
+    });
+
+  return nameInfoPromise;
 }
 
 /*
@@ -155,6 +177,7 @@ function whois(network: Object, args: Array<string>) {
               'owner_script': bitcoinjs.address.toOutputScript(
                 coerceMainnetAddress(nameInfo.address)).toString('hex'),
               'last_transaction_height': lastBlock,
+              'block_renewed_at': nameHistory[lastBlock].slice(-1)[0].last_renewed,
             });
           })
       }
@@ -217,14 +240,19 @@ function lookup(network: Object, args: Array<string>) {
   const name = args[0];
   const zonefileLookupUrl = network.blockstackAPIUrl + '/v1/names';
 
-  const profilePromise = blockstack.lookupProfile(name, zonefileLookupUrl);
-  const zonefilePromise = Promise.resolve().then(() => {
-      return network.getNameInfo(name)
-    })
-    .then(nameInfo => nameInfo.zonefile);
+  const nameInfoPromise = getNameInfo(network, name);
+  const profilePromise = blockstack.lookupProfile(name, zonefileLookupUrl)
+    .catch(() => null);
 
-  return Promise.all([profilePromise, zonefilePromise])
-    .then(([profile, zonefile]) => {
+  const zonefilePromise = nameInfoPromise.then((nameInfo) => nameInfo ? nameInfo.zonefile : null);
+
+  return Promise.all([profilePromise, zonefilePromise, nameInfoPromise])
+    .then(([profile, zonefile, nameInfo]) => {
+      if (nameInfo.hasOwnProperty('grace_period') && nameInfo.grace_period) {
+        return JSONStringify({
+          error: `Name is expired at block ${nameInfo.expire_block} and must be renewed by block ${nameInfo.renewal_deadline}`
+        });
+      }
       const ret = {
         zonefile: zonefile,
         profile: profile
@@ -317,6 +345,8 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
   const paymentKey = args[2];
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
+  const namespaceID = name.split('.').slice(-1)[0];
+
   const txPromise = blockstack.transactions.makePreorder(
     name, address, paymentKey);
 
@@ -349,16 +379,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
     return sumUTXOs(utxos);
   });
 
-  const nameInfoPromise = network.getNameInfo(name)
-    .then(nameInfo => nameInfo)
-    .catch((error) => {
-      if (error.message === 'Name not found') {
-        return null;
-      } else {
-        throw error;
-      }
-    });
-
+  const nameInfoPromise = getNameInfo(network, name);
   const blockHeightPromise = network.getBlockHeight();
 
   const safetyChecksPromise = Promise.all([
@@ -368,17 +389,21 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
       blockstack.safety.isNameAvailable(name),
       blockstack.safety.addressCanReceiveName(network.coerceAddress(address)),
       blockstack.safety.isInGracePeriod(name),
+      network.getNamespaceBurnAddress(namespaceID, true, receiveFeesPeriod),
+      network.getNamespaceBurnAddress(namespaceID, false, receiveFeesPeriod),
       paymentBalance,
       estimatePromise,
       network.getNamePrice(name),
       network.getAccountBalance(paymentAddress, 'STACKS'),
     ])
     .then(([nameInfo, blockHeight, isNameValid, isNameAvailable, addressCanReceiveName, 
-            isInGracePeriod, paymentBalance, estimate,
+            isInGracePeriod, givenNamespaceBurnAddress, trueNamespaceBurnAddress,
+            paymentBalance, estimate,
             namePrice, STACKSBalance]) => {
       if (isNameValid &&
           (isNameAvailable || !nameInfo || isNameAvailableAt(nameInfo, blockHeight+1)) &&
           addressCanReceiveName && !isInGracePeriod && paymentBalance >= estimate &&
+          trueNamespaceBurnAddress === givenNamespaceBurnAddress &&
           (namePrice.units === 'BTC' || (namePrice.units == 'STACKS'
            && namePrice.amount.compareTo(STACKSBalance) <= 0))) {
         return {'status': true};
@@ -395,7 +420,9 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
           'paymentBalanceStacks': STACKSBalance.toString(),
           'nameCostUnits': namePrice.units,
           'nameCostAmount': namePrice.amount.toString(),
-          'estimateCostBTC': estimate
+          'estimateCostBTC': estimate,
+          'namespaceBurnAddress': givenNamespaceBurnAddress,
+          'trueNamespaceBurnAddress': trueNamespaceBurnAddress,
         }, true);
       }
     });
@@ -487,16 +514,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
     return sumUTXOs(utxos);
   });
  
-  const nameInfoPromise = network.getNameInfo(name)
-    .then(nameInfo => nameInfo)
-    .catch((error) => {
-      if (error.message === 'Name not found') {
-        return null;
-      } else {
-        throw error;
-      }
-    });
-
+  const nameInfoPromise = getNameInfo(network, name);
   const blockHeightPromise = network.getBlockHeight();
 
   const safetyChecksPromise = Promise.all([
@@ -611,7 +629,7 @@ function update(network: Object, args: Array<string>) {
   const paymentBalancePromise = paymentUTXOsPromise.then((utxos) => {
     return sumUTXOs(utxos);
   });
- 
+
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
@@ -1664,7 +1682,8 @@ function profileStore(network: Object, args: Array<string>) {
     
   return Promise.all([lookupPromise, verifyProfilePromise])
     .then(([nameInfo, verifiedProfile]) => {
-      if (network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress)) {
+      if (safetyChecks && 
+          network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress)) {
         throw new Error(`Name owner address ${nameInfo.address} does not match ` +
           `private key address ${ownerAddress}`);
       }
@@ -1712,7 +1731,7 @@ function zonefilePush(network: Object, args: Array<string>) {
   let zonefileData = null;
 
   try {
-    zonefileData = fs.readFileSync(zonefileDataOrPath);
+    zonefileData = fs.readFileSync(zonefileDataOrPath).toString();
   } catch(e) {
     zonefileData = zonefileDataOrPath;
   }
@@ -1995,22 +2014,31 @@ export function CLIMain() {
     txOnly = opts['x'];
     estimateOnly = opts['e'];
     safetyChecks = !opts['U'];
+    receiveFeesPeriod = opts['N'] ? parseInt(opts['N']) : receiveFeesPeriod;
+    gracePeriod = opts['G'] ? parseInt(opts['G']) : gracePeriod;
+
     const consensusHash = opts['C'];
     const testnet = opts['t'];
+
+    if (testnet) {
+      BLOCKSTACK_TEST = testnet
+    }
+
     const configPath = opts['c'] ? opts['c'] : 
       (testnet ? DEFAULT_CONFIG_REGTEST_PATH : DEFAULT_CONFIG_PATH);
+
     const namespaceBurnAddr = opts['B'];
     const feeRate = opts['F'];
     const priceToPay = opts['P'];
     const priceUnits = opts['D'];
 
     const configData = loadConfig(configPath, testnet);
-    let blockstackNetwork = getNetwork(configData, (!!BLOCKSTACK_TEST || !!testnet));
       
     // wrap command-line options
-    blockstackNetwork = new CLINetworkAdapter(
-        blockstackNetwork, consensusHash, feeRate, namespaceBurnAddr,
-        priceToPay, priceUnits);
+    const blockstackNetwork = new CLINetworkAdapter(
+        getNetwork(configData, (!!BLOCKSTACK_TEST || !!testnet)),
+        consensusHash, feeRate, namespaceBurnAddr,
+        priceToPay, priceUnits, receiveFeesPeriod, gracePeriod);
 
     blockstack.config.network = blockstackNetwork;
 
