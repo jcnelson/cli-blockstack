@@ -1,5 +1,6 @@
 /* @flow */
 
+const blockstack = require('blockstack')
 const keychains = require('blockstack-keychains')
 const bitcoin = require('bitcoinjs-lib')
 const bip39 = require('bip39')
@@ -91,8 +92,9 @@ function getMaster(mnemonic : string) {
 export function getOwnerKeyInfo(mnemonic : string, 
                                 index : number, 
                                 version : string = 'v0.10-current') {
+  const network = blockstack.config.network;
   const identity = getIdentityNodeFromPhrase(mnemonic, index, version);
-  const addr = toAddress(identity);
+  const addr = network.coerceAddress(toAddress(identity));
   const privkey = toPrivkeyHex(identity);
   return {
     privateKey: privkey,
@@ -111,9 +113,10 @@ export function getOwnerKeyInfo(mnemonic : string,
  *    .address (string) the address of the private key
  */
 export function getPaymentKeyInfo(mnemonic : string) {
+  const network = blockstack.config.network;
   const identity = getIdentityNodeFromPhrase(mnemonic, 0, 'current-btc');
-  const addr = toAddress(identity);
-  const privkey = toPrivkeyHex(identity);
+  const addr = network.coerceAddress(identity.keyPair.getAddress());
+  const privkey = identity.keyPair.d.toHex() + '01';
   return {
     privateKey: privkey,
     address: addr,
