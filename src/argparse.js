@@ -33,7 +33,7 @@ export const SUBDOMAIN_PATTERN =
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
-  utxoServiceUrl: 'https://utxo.technofractal.com',
+  utxoServiceUrl: 'https://utxo.blockstack.org',
 };
 
 const CONFIG_REGTEST_DEFAULTS = {
@@ -42,8 +42,18 @@ const CONFIG_REGTEST_DEFAULTS = {
   utxoServiceUrl: 'http://localhost:18332'
 };
 
+const PUBLIC_TESTNET_HOST = '13.65.207.163';
+// const PUBLIC_TESTNET_HOST = '127.0.0.1';
+
+const CONFIG_TESTNET_DEFAULTS = {
+  blockstackAPIUrl: `http://${PUBLIC_TESTNET_HOST}:16268`,
+  broadcastServiceUrl: `http://${PUBLIC_TESTNET_HOST}:16269`,
+  utxoServiceUrl: `http://${PUBLIC_TESTNET_HOST}:18332`
+};
+
 export const DEFAULT_CONFIG_PATH = '~/.blockstack-cli.conf'
 export const DEFAULT_CONFIG_REGTEST_PATH = '~/.blockstack-cli-regtest.conf'
+export const DEFAULT_CONFIG_TESTNET_PATH = '~/.blockstack-cli-testnet.conf'
 
 // CLI usage
 const CLI_ARGS = {
@@ -187,6 +197,14 @@ const CLI_ARGS = {
         pattern: ADDRESS_PATTERN,
       },
       minItems: 1,
+      maxItems: 1,
+    },
+    make_keychain: {
+      type: "array",
+      items: {
+        type: 'string',
+      },
+      minItems: 0,
       maxItems: 1,
     },
     name_import: {
@@ -399,18 +417,45 @@ const CLI_ARGS = {
         },
         {
           type: 'string',
-          pattern: ADDRESS_PATTERN,
-        },
-        {
-          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
         },
         {
           type: 'string',
           pattern: PRIVATE_KEY_PATTERN,
         },
+        {
+          type: 'string'
+        },
+        {
+          type: 'string',
+        },
       ],
       minItems: 4,
-      maxItems: 4,
+      maxItems: 5,
+    },
+    register_subdomain: {
+      type: "array",
+      items: [
+        {
+          type: 'string',
+          pattern: SUBDOMAIN_PATTERN,
+        },
+        {
+          type: 'string',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+        {
+          type: 'string',
+        },
+        {
+          type: 'string',
+        },
+        {
+          type: 'string',
+        },
+      ],
+      minItems: 4,
+      maxItems: 5,
     },
     revoke: {
       type: "array",
@@ -587,7 +632,9 @@ Options can be:
     -e                  Estimate the BTC cost of an transaction (in satoshis).
                         Do not generate or send any transactions.
 
-    -t                  Use integration test framework instead of mainnet.
+    -t                  Use the public testnet instead of mainnet.
+
+    -i                  Use integration test framework instead of mainnet.
 
     -U                  Unsafe mode.  No safety checks will be performed.
 
@@ -595,26 +642,25 @@ Options can be:
                         print them to stdout.
 
     -B BURN_ADDR        Use the given namespace burn address instead of the one
-                        obtained from the Blockstack network (requires -t)
+                        obtained from the Blockstack network (requires -i)
 
     -D DENOMINATION     Denominate the price to pay in the given units
-                        (requires -t and -P)
+                        (requires -i and -P)
 
     -C CONSENSUS_HASH   Use the given consensus hash instead of one obtained
-                        from the network (requires -t)
+                        from the network (requires -i)
 
     -F FEE_RATE         Use the given transaction fee rate instead of the one
-                        obtained from the Bitcoin network (requires -t)
+                        obtained from the Bitcoin network (requires -i)
 
     -G GRACE_PERIOD     Number of blocks in which a name can be renewed after it
-                        expires (requires -t)
+                        expires (requires -i)
 
     -N PAY2NS_PERIOD    Number of blocks in which a namespace receives the registration
-                        and renewal fees after it is created (requires -t)
+                        and renewal fees after it is created (requires -i)
 
     -P PRICE            Use the given price to pay for names or namespaces
-                        (requires -t)
-
+                        (requires -i)
 
 Command reference
   Querying Blockstack IDs
@@ -669,13 +715,22 @@ Command reference
 
 
   Blockstack ID Management
-    register BLOCKSTACK_ID ADDR ZONEFILE PAYMENT_KEY
+    register BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY GAIA_HUB_URL [ZONE_FILE]
                         Register a Blockstack ID to a given address.  This
                         will automatically generate and propagate the two
                         blockchain transactions required to do this, and
                         will automatically propagate the given zone file
                         to the Blockstack peer network once the transactions
-                        confirm.
+                        confirm.  If ZONE_FILE is not given, then one will
+                        be generated automatically from the GAIA_HUB_URL.
+
+    register_subdomain BLOCKSTACK_ID OWNER_KEY GAIA_HUB_URL [REGISTRAR_URL [ZONE_FILE]]
+                        Register a subdomain (a.k.a. sponsored name).  This will
+                        automatically look up the registrar for the on-chain name,
+                        and request that it insert a new subdomain record with the
+                        given address and zone file.  If ZONE_FILE is not given,
+                        one will be generated automatically with GAIA_HUB_URL.
+                        The request will be sent to REGISTRAR_URL if given; otherwise
 
     revoke BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY
                         Revoke a Blockstack ID
@@ -731,6 +786,12 @@ Command reference
     get_payment_key 12_WORD_PHRASE
                         Get the payment private key of a 12-word backup phrase.
 
+    make_keychain [12_WORD_PHRASE]
+                        Make a 12-word phrase, and output the ECDSA private keys
+                        and addresses for the owner and payment keys for the
+                        Blockstack keychain.  If 12_WORD_PHRASE is given, then use
+                        it instead of making a new one.
+
   Account Management
     balance ADDRESS
                         Get the balances of all of an address's tokens
@@ -763,7 +824,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'etUxC:F:B:P:D:G:N:') : Object {
+                           opts: string = 'eitUxC:F:B:P:D:G:N:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);
@@ -882,12 +943,23 @@ export function checkArgs(argList: Array<string>)
  * If no config file exists, then return the default config.
  *
  * @configPath (string) the path to the config file.
- * @regtest (boolean) are we in regtest mode?
+ * @networkType (sring) 'mainnet', 'regtest', or 'testnet'
  */
-export function loadConfig(configFile: string, regtest: boolean) : Object {
+export function loadConfig(configFile: string, networkType: string) : Object {
+  if (networkType !== 'mainnet' && networkType !== 'testnet' && networkType != 'regtest') {
+    throw new Error("Unregognized network")
+  }
+
   let configData = null;
-  let configRet = Object.assign({}, 
-    regtest ? CONFIG_REGTEST_DEFAULTS : CONFIG_DEFAULTS);
+  let configRet = null;
+
+  if (networkType === 'mainnet') {
+    configRet = Object.assign({}, CONFIG_DEFAULTS);
+  } else if (networkType === 'regtest') {
+    configRet = Object.assign({}, CONFIG_REGTEST_DEFAULTS);
+  } else {
+    configRet = Object.assign({}, CONFIG_TESTNET_DEFAULTS);
+  }
 
   try {
     configData = JSON.parse(fs.readFileSync(configFile).toString());
