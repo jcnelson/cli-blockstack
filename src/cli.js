@@ -7,6 +7,8 @@ import ecurve from 'ecurve';
 import fs from 'fs';
 const bigi = require('bigi')
 const URL = require('url')
+const bip39 = require('bip39')
+const crypto = require('crypto')
 
 import {
   parseZoneFile
@@ -32,6 +34,7 @@ import {
   loadConfig,
   DEFAULT_CONFIG_PATH,
   DEFAULT_CONFIG_REGTEST_PATH,
+  DEFAULT_CONFIG_TESTNET_PATH,
   ADDRESS_PATTERN
 } from './argparse';
 
@@ -453,7 +456,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
  * @name (string) the name to register
  * @address (string) the address that owns this name
  * @paymentKey (string) the payment private key
- * @zonefile (string) if given, the path to the zone file data to use
+ * @zonefile (string) if given, the raw zone file or the path to the zone file data to use
  * @zonefileHash (string) if given, this is the raw zone file hash to use
  *  (in which case, @zonefile will be ignored)
  * @registerTxOnly (boolean) OPTIONAL: used internally to coerce returning only the tx
@@ -478,7 +481,13 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
   }
 
   if (!!zonefilePath) {
-    zonefile = fs.readFileSync(zonefilePath).toString();
+    try {
+      zonefile = fs.readFileSync(zonefilePath).toString();
+    }
+    catch(e) {
+      // zone file path as raw zone file
+      zonefile = zonefilePath
+    }
   }
 
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
@@ -1509,28 +1518,43 @@ function announce(network: Object, args: Array<string>) {
  * and register transactions to the broadcaster, as 
  * well as the zone file.
  * @arg name (string) the name to register
- * @arg address (string) the address to own it
- * @arg zonefile (string) the path to the zone file to give this name
+ * @arg ownerKey (string) the hex-encoded owner private key
  * @arg paymentKey (string) the hex-encoded payment key to purchase this name
+ * @arg gaiaHubUrl (string) the gaia hub URL to use
+ * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
+ *  supercedes gaiaHubUrl
  */
 function register(network: Object, args: Array<string>) {
   const name = args[0];
-  const address = args[1];
-  const zonefilePath = args[2];
-  const paymentKey = args[3];
-  
-  const coercedAddress = network.coerceAddress(address)
-  const zonefile = fs.readFileSync(zonefilePath).toString();
+  const ownerKey = args[1];
+  const paymentKey = args[2];
+  const gaiaHubUrl = args[3];
+
+  const address = getPrivateKeyAddress(network, ownerKey);
+  const mainnetAddress = coerceMainnetAddress(address)
+  const emptyProfile = {type: '@Person', account: []};
+
+  let zonefile = "";
+  if (args.length > 4) {
+    const zonefilePath = args[4];
+    zonefile = fs.readFileSync(zonefilePath).toString();
+  }
+  else {
+    // generate one 
+    zonefile = blockstack.makeProfileZoneFile(
+      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`)
+  }
 
   let preorderTx = "";
   let registerTx = "";
+  let broadcastResult = null;
 
   // carry out safety checks for preorder and register 
   const preorderSafetyCheckPromise = txPreorder(
     network, [name, address, paymentKey], true);
 
   const registerSafetyCheckPromise = txRegister(
-    network, [name, address, paymentKey, zonefilePath], true);
+    network, [name, address, paymentKey, zonefile], true);
 
   return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
     .then(([preorderSafetyChecks, registerSafetyChecks]) => {
@@ -1574,9 +1598,158 @@ function register(network: Object, args: Array<string>) {
       else {
         return network.broadcastNameRegistration(preorderTx, registerTx, zonefile);
       }
+    })
+    .then((txResult) => {
+      // sign and upload profile
+      broadcastResult = txResult;
+
+      const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
+      const wrappedToken = blockstack.wrapProfileToken(signedToken);
+      const tokenRecords = [wrappedToken];
+      const signedProfileData = JSONStringify(tokenRecords);
+
+      return gaiaUploadAll(
+        network, zonefile, 'profile.json', signedProfileData, ownerKey);
+    })
+    .then((gaiaUrls) => {
+      return JSONStringify({
+        'profileUrls': gaiaUrls.dataUrls, 
+        'txInfo': broadcastResult
+      });
     });
 }
 
+
+/*
+ * Register a subdomain name the easy way.  Send the
+ * zone file and signed subdomain records to the subdomain registrar.
+ * @arg name (string) the name to register
+ * @arg ownerKey (string) the hex-encoded owner private key
+ * @arg paymentKey (string) the hex-encoded payment key to purchase this name
+ * @arg gaiaHubUrl (string) the gaia hub URL to use
+ * @arg registrarUrl (string) OPTIONAL the registrar URL
+ * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
+ *  supercedes gaiaHubUrl
+ */
+function register_subdomain(network: Object, args: Array<string>) {
+  const name = args[0];
+  const ownerKey = args[1];
+  const gaiaHubUrl = args[2];
+  const registrarUrl = args[3];
+
+  const address = getPrivateKeyAddress(network, ownerKey);
+  const mainnetAddress = coerceMainnetAddress(address)
+  const emptyProfile = {type: '@Person', account: []};
+  const onChainName = name.split('.').slice(-2).join('.');
+  const subName = name.split('.')[0];
+
+  let zonefile = "";
+
+  if (args.length > 4) {
+    const zonefilePath = args[4];
+    zonefile = fs.readFileSync(zonefilePath).toString();
+  }
+  else {
+    // generate one 
+    zonefile = blockstack.makeProfileZoneFile(
+      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`)
+  }
+
+  let broadcastResult = null;
+  let api_key = process.env.API_KEY || null;
+  
+  const request = {
+    'zonefile': zonefile,
+    'name': subName,
+    'owner_address': mainnetAddress
+  };
+
+  let options = {
+    method: 'POST',
+    headers: {
+      'Content-type': 'application/json',
+      'Authorization': ''
+    },
+    body: JSON.stringify(request)
+  };
+
+  if (!!api_key) {
+    options.headers.Authorization = `bearer ${api_key}`;
+  }
+
+  const onChainNamePromise = getNameInfo(network, onChainName);
+  const registrarInfoPromise = fetch(`${registrarUrl}/index`)
+    .then(resp => resp.json())
+
+  const profileUploadPromise = Promise.resolve().then(() => {
+      // sign and upload profile
+      const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
+      const wrappedToken = blockstack.wrapProfileToken(signedToken);
+      const tokenRecords = [wrappedToken];
+      const signedProfileData = JSONStringify(tokenRecords);
+
+      return gaiaUploadAll(
+        network, zonefile, 'profile.json', signedProfileData, ownerKey);
+    })
+    .then((gaiaUrls) => {
+      return JSONStringify({
+        'profileUrls': gaiaUrls.dataUrls, 
+      });
+    });
+
+  if (!safetyChecks) {
+    const registerPromise = fetch(`${registrarUrl}/register`, options)
+      .then(resp => resp.json())
+
+    return Promise.all([registerPromise, profileUploadPromise])
+      .then(([registerInfo, profileUploadInfo]) => {
+        return JSONStringify({
+          'txInfo': registerInfo,
+          'profileUrls': profileUploadInfo.profileUrls,
+        });
+      });
+  }
+
+  const safetyChecksPromise = Promise.all([
+      onChainNamePromise,
+      blockstack.safety.isNameAvailable(name),
+      registrarInfoPromise
+    ])
+    .then(([onChainNameInfo, isNameAvailable, registrarInfo]) => {
+      if (safetyChecks) {
+        if (!onChainNameInfo || !isNameAvailable || 
+            registrarInfo.domainName !== onChainName) {
+          return {
+            'status': false,
+            'error': 'Subdomain cannot be safely registered',
+            'onChainNameInfo': onChainNameInfo,
+            'isNameAvailable': isNameAvailable,
+            'registrarDomainName': registrarInfo.domainName,
+          };
+        }
+      }
+      return { 'status': true }
+    });
+
+  return safetyChecksPromise.then((safetyChecks) => {
+    if (safetyChecks.status) {
+
+      const registerPromise = fetch(`${registrarUrl}/register`, options)
+        .then(resp => resp.json())
+
+      return Promise.all([registerPromise, profileUploadPromise])
+        .then(([registerInfo, profileUploadInfo]) => {
+          return JSONStringify({
+            'txInfo': registerInfo,
+            'profileUrls': profileUploadInfo.profileUrls,
+          });
+        });
+    }
+    else {
+      return Promise.resolve().then(() => JSONStringify(safetyChecks, true))
+    }
+  });
+}
 
 /*
  * Sign a profile.
@@ -1658,6 +1831,48 @@ function gaiaUpload(network: Object,
 }
 
 /*
+ * Upload data to all Gaia hubs, given a zone file
+ * @network (object) the network to use
+ * @nameZonefile (string) the name's zone file
+ * @gaiaPath (string) the path to the file to store in Gaia
+ * @gaiaData (string) the data to store
+ * @privateKey (string) the hex-encoded private key
+ * @return a promise with {'dataUrls': [urls to the data]}
+ */
+function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string, 
+  gaiaData: string, privateKey: string) : Promise<*> {
+  
+  const zonefile = parseZoneFile(nameZonefile);
+  const gaiaProfileUrls = zonefile.uri.map((uriRec) => uriRec.target);
+  const gaiaUrls = gaiaProfileUrls.map((gaiaProfileUrl) => {
+    const urlInfo = URL.parse(gaiaProfileUrl);
+    if (!urlInfo.protocol) {
+      return null;
+    }
+    if (!urlInfo.host) {
+      return null;
+    }
+    if (!urlInfo.path) {
+      return null;
+    }
+    if (!urlInfo.path.endsWith('profile.json')) {
+      return null;
+    }
+    // keep flow happy
+    return `${String(urlInfo.protocol)}//${String(urlInfo.host)}`;
+  })
+  .filter((gaiaUrl) => !!gaiaUrl);
+
+  const uploadPromises = gaiaUrls.map((gaiaUrl) => 
+    gaiaUpload(network, gaiaUrl, 'profile.json', gaiaData, privateKey));
+
+  return Promise.all(uploadPromises)
+    .then((publicUrls) => {
+      return { 'dataUrls': publicUrls };
+    });
+}
+
+/*
  * Store a signed profile for a name.
  * * verify that the profile was signed by the name's owner address
  * * verify that the private key matches the name's owner address
@@ -1690,35 +1905,11 @@ function profileStore(network: Object, args: Array<string>) {
       if (!nameInfo.zonefile) {
         throw new Error(`Could not load zone file for '${name}'`)
       }
-
-      const zonefile = parseZoneFile(nameInfo.zonefile);
-      const gaiaProfileUrls = zonefile.uri.map((uriRec) => uriRec.target);
-      const gaiaUrls = gaiaProfileUrls.map((gaiaProfileUrl) => {
-        const urlInfo = URL.parse(gaiaProfileUrl);
-        if (!urlInfo.protocol) {
-          return null;
-        }
-        if (!urlInfo.host) {
-          return null;
-        }
-        if (!urlInfo.path) {
-          return null;
-        }
-        if (!urlInfo.path.endsWith('profile.json')) {
-          return null;
-        }
-        // keep flow happy
-        return `${String(urlInfo.protocol)}//${String(urlInfo.host)}`;
-      })
-      .filter((gaiaUrl) => !!gaiaUrl);
-
-      const uploadPromises = gaiaUrls.map((gaiaUrl) => 
-        gaiaUpload(network, gaiaUrl, 'profile.json', signedProfileData, privateKey));
-
-      return Promise.all(uploadPromises)
-        .then((publicUrls) => {
-          return JSONStringify({ 'profileUrls': publicUrls });
-        });
+      return gaiaUploadAll(
+        network, nameInfo.zonefile, 'profile.json', signedProfileData, privateKey);
+    })
+    .then((gaiaUrls) => {
+      return JSONStringify({'profileUrls': gaiaUrls.dataUrls});
     });
 }
 
@@ -1775,6 +1966,27 @@ function getPaymentKey(network: Object, args: Array<string>) {
   let keyInfo = [];
   keyInfo.push(getPaymentKeyInfo(mnemonic));
   return Promise.resolve().then(() => JSONStringify(keyInfo));
+}
+
+/*
+ * Make a private key and output it 
+ * args:
+ * @mnemonic (string) OPTIONAL; the 12-word phrase
+ */
+function makeKeychain(network: Object, args: Array<string>) {
+  let mnemonic = args[0];
+  const STRENGTH = 128;   // 12 words
+  if (!mnemonic) {
+    mnemonic = bip39.generateMnemonic(STRENGTH, crypto.randomBytes);
+  }
+
+  const ownerKeyInfo = getOwnerKeyInfo(mnemonic, 0);
+  const paymentKeyInfo = getPaymentKeyInfo(mnemonic);
+  return Promise.resolve().then(() => JSONStringify({
+    'mnemonic': mnemonic,
+    'ownerKeyInfo': ownerKeyInfo,
+    'paymentKeyInfo': paymentKeyInfo
+  }));
 }
 
 /*
@@ -1973,6 +2185,7 @@ const COMMANDS = {
   'get_owner_keys': getOwnerKeys,
   'get_payment_key': getPaymentKey,
   'lookup': lookup,
+  'make_keychain': makeKeychain,
   'names': names,
   'name_import': nameImport,
   'namespace_preorder': namespacePreorder,
@@ -1984,6 +2197,7 @@ const COMMANDS = {
   'profile_store': profileStore,
   'profile_verify': profileVerify,
   'register': register,
+  'register_subdomain': register_subdomain,
   'renew': renew,
   'revoke': revoke,
   'send_tokens': sendTokens,
@@ -2018,25 +2232,29 @@ export function CLIMain() {
     gracePeriod = opts['G'] ? parseInt(opts['G']) : gracePeriod;
 
     const consensusHash = opts['C'];
-    const testnet = opts['t'];
+    const integration_test = opts['i'];
+    const testnet = opts['t']
 
-    if (testnet) {
-      BLOCKSTACK_TEST = testnet
+    if (integration_test) {
+      BLOCKSTACK_TEST = integration_test
     }
 
     const configPath = opts['c'] ? opts['c'] : 
-      (testnet ? DEFAULT_CONFIG_REGTEST_PATH : DEFAULT_CONFIG_PATH);
+      (integration_test ? DEFAULT_CONFIG_REGTEST_PATH : 
+      (testnet ? DEFAULT_CONFIG_TESTNET_PATH : DEFAULT_CONFIG_PATH));
 
     const namespaceBurnAddr = opts['B'];
     const feeRate = opts['F'];
     const priceToPay = opts['P'];
     const priceUnits = opts['D'];
 
-    const configData = loadConfig(configPath, testnet);
+    const networkType = testnet ? 'testnet' : (integration_test ? 'regtest' : 'mainnet');
+
+    const configData = loadConfig(configPath, networkType);
       
     // wrap command-line options
     const blockstackNetwork = new CLINetworkAdapter(
-        getNetwork(configData, (!!BLOCKSTACK_TEST || !!testnet)),
+        getNetwork(configData, (!!BLOCKSTACK_TEST || !!integration_test || !!testnet)),
         consensusHash, feeRate, namespaceBurnAddr,
         priceToPay, priceUnits, receiveFeesPeriod, gracePeriod);
 
@@ -2053,5 +2271,3 @@ export function CLIMain() {
      });
   }
 }
-
-
