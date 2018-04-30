@@ -21,7 +21,7 @@ export const PRIVATE_KEY_PATTERN =
 export const PUBLIC_KEY_PATTERN = 
   '^([0-9a-f]{66,130})$'
 
-export const INT_PATTERN = '^[0-9]+$'
+export const INT_PATTERN = '^-?[0-9]+$'
 
 export const ZONEFILE_HASH_PATTERN = '^([0-9a-f]{40})$'
 
