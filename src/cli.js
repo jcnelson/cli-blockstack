@@ -1159,7 +1159,7 @@ function namespaceReveal(network: Object, args: Array<string>) {
   const namespaceID = args[0];
   const revealAddr = args[1];
   const version = parseInt(args[2]);
-  const lifetime = parseInt(args[3]);
+  let lifetime = parseInt(args[3]);
   const coeff = parseInt(args[4]);
   const base = parseInt(args[5]);
   const bucketString = args[6];
@@ -1169,6 +1169,10 @@ function namespaceReveal(network: Object, args: Array<string>) {
 
   const buckets = bucketString.split(',')
     .map((x) => {return parseInt(x)});
+
+  if (lifetime < 0) {
+    lifetime = 2**32 - 1;
+  }
 
   const namespace = new blockstack.transactions.BlockstackNamespace(namespaceID);
 
