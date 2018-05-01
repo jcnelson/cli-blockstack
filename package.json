@@ -93,7 +93,7 @@
     "tape-promise": "^2.0.1"
   },
   "dependencies": {
-    "blockstack": "^0.17.2",
+    "blockstack": "^18.0.0",
     "minimist": "^1.2.0",
     "ajv": "^4.11.5",
     "bigi": "^1.4.2",
