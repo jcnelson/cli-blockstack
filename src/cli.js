@@ -9,6 +9,7 @@ const bigi = require('bigi')
 const URL = require('url')
 const bip39 = require('bip39')
 const crypto = require('crypto')
+const ZoneFile = require('zone-file')
 
 import {
   parseZoneFile
@@ -82,14 +83,6 @@ function getPrivateKeyAddress(network: Object, privateKey: string) : string {
 }
 
 /*
- * Coerse an address to be a mainnet address
- */
-function coerceMainnetAddress(address: string) : string {
-  const addressHash = bitcoinjs.address.fromBase58Check(address).hash
-  return bitcoinjs.address.toBase58Check(addressHash, 0)
-}
-
-/*
  * Is a name a sponsored name (a subdomain)?
  */
 function isSubdomain(name: string) : boolean {
@@ -120,28 +113,13 @@ function sumUTXOs(utxos: Array<UTXO>) {
   return utxos.reduce((agg, x) => agg + x.value, 0);
 }
 
-/*
- * Given a name's info and a block height,
- * will the name be available at the given
- * block height (assuming no one else claims it?)
- * @nameInfo (object) the name info
- * @blockHeight (number) the block height
- * @return whether or not the name will be available
- */
-function isNameAvailableAt(nameInfo: Object, blockHeight: number) : boolean {
-  return false;
-  /*
-  return (nameInfo.expire_block > 0 && nameInfo.renewal_deadline > 0 &&
-          nameInfo.renewal_deadline < blockHeight);
-  */
-}
 
 /*
  * Easier-to-use getNameInfo.  Returns null if the name does not exist.
  */
 function getNameInfo(network: Object, name: string) : Promise<*> {
   const nameInfoPromise = network.getNameInfo(name)
-    .then(nameInfo => nameInfo)
+    .then((nameInfo) => nameInfo)
     .catch((error) => {
       if (error.message === 'Name not found') {
         return null;
@@ -178,7 +156,7 @@ function whois(network: Object, args: Array<string>) {
             return Object.assign({}, nameInfo, {
               'owner_address': nameInfo.address,
               'owner_script': bitcoinjs.address.toOutputScript(
-                coerceMainnetAddress(nameInfo.address)).toString('hex'),
+                network.coerceMainnetAddress(nameInfo.address)).toString('hex'),
               'last_transaction_height': lastBlock,
               'block_renewed_at': nameHistory[lastBlock].slice(-1)[0].last_renewed,
             });
@@ -240,11 +218,11 @@ function names(network: Object, args: Array<string>) {
  * @name (string) the name to look up
  */
 function lookup(network: Object, args: Array<string>) {
-  const name = args[0];
-  const zonefileLookupUrl = network.blockstackAPIUrl + '/v1/names';
+  network.setCoerceMainnetAddress(true);
 
+  const name = args[0];
   const nameInfoPromise = getNameInfo(network, name);
-  const profilePromise = blockstack.lookupProfile(name, zonefileLookupUrl)
+  const profilePromise = blockstack.lookupProfile(name)
     .catch(() => null);
 
   const zonefilePromise = nameInfoPromise.then((nameInfo) => nameInfo ? nameInfo.zonefile : null);
@@ -404,7 +382,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
             paymentBalance, estimate,
             namePrice, STACKSBalance]) => {
       if (isNameValid &&
-          (isNameAvailable || !nameInfo || isNameAvailableAt(nameInfo, blockHeight+1)) &&
+          (isNameAvailable || !nameInfo) &&
           addressCanReceiveName && !isInGracePeriod && paymentBalance >= estimate &&
           trueNamespaceBurnAddress === givenNamespaceBurnAddress &&
           (namePrice.units === 'BTC' || (namePrice.units == 'STACKS'
@@ -540,7 +518,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
     .then(([nameInfo, blockHeight, isNameValid, isNameAvailable, 
             addressCanReceiveName, isInGracePeriod, paymentBalance, estimateCost]) => {
       if (isNameValid &&
-         (isNameAvailable || !nameInfo || isNameAvailableAt(nameInfo, blockHeight+1)) &&
+         (isNameAvailable || !nameInfo) &&
           addressCanReceiveName && !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
       }
@@ -801,6 +779,7 @@ function renew(network: Object, args: Array<string>) {
   const paymentKey = args[2];
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
+  const namespaceID = name.split('.').slice(-1)[0];
 
   let newAddress = null;
   let zonefile = null;
@@ -902,15 +881,19 @@ function renew(network: Object, args: Array<string>) {
   const safetyChecksPromise = Promise.all([
       blockstack.safety.isNameValid(name),
       blockstack.safety.ownsName(name, network.coerceAddress(ownerAddress)),
+      network.getNamespaceBurnAddress(namespaceID, true, receiveFeesPeriod),
+      network.getNamespaceBurnAddress(namespaceID, false, receiveFeesPeriod),
       canReceiveNamePromise,
       network.getNamePrice(name),
       network.getAccountBalance(paymentAddress, 'STACKS'),
       estimatePromise,
       paymentBalancePromise,
     ])
-    .then(([isNameValid, ownsName, addressCanReceiveName, nameCost, 
+    .then(([isNameValid, ownsName, givenNSBurnAddr, trueNSBurnAddr, 
+           addressCanReceiveName, nameCost, 
            accountBalance, estimateCost, paymentBalance]) => {
       if (isNameValid && ownsName && addressCanReceiveName && 
+          trueNSBurnAddr === givenNSBurnAddr &&
           (nameCost.units === 'BTC' || (nameCost.units == 'STACKS' &&
            nameCost.amount.compareTo(accountBalance) <= 0)) &&
           estimateCost < paymentBalance) {
@@ -927,7 +910,9 @@ function renew(network: Object, args: Array<string>) {
           'nameCostUnits': nameCost.units,
           'nameCostAmount': nameCost.amount.toString(),
           'paymentBalanceBTC': paymentBalance,
-          'paymentBalanceStacks': accountBalance.amount.toString()
+          'paymentBalanceStacks': accountBalance.toString(),
+          'namespaceBurnAddress': givenNSBurnAddr,
+          'trueNamespaceBurnAddress': trueNSBurnAddr,
         }, true);
       }
     });
@@ -1172,6 +1157,14 @@ function namespaceReveal(network: Object, args: Array<string>) {
 
   if (lifetime < 0) {
     lifetime = 2**32 - 1;
+  }
+
+  if (nonalphaDiscount === 0) {
+    throw new Error("Cannot have a 0 non-alpha discount (pass 1 for no discount)");
+  }
+
+  if (noVowelDiscount === 0) {
+    throw new Error("Cannot have a 0 no-vowel discount (pass 1 for no discount)");
   }
 
   const namespace = new blockstack.transactions.BlockstackNamespace(namespaceID);
@@ -1535,7 +1528,7 @@ function register(network: Object, args: Array<string>) {
   const gaiaHubUrl = args[3];
 
   const address = getPrivateKeyAddress(network, ownerKey);
-  const mainnetAddress = coerceMainnetAddress(address)
+  const mainnetAddress = network.coerceMainnetAddress(address)
   const emptyProfile = {type: '@Person', account: []};
 
   let zonefile = "";
@@ -1616,6 +1609,12 @@ function register(network: Object, args: Array<string>) {
         network, zonefile, 'profile.json', signedProfileData, ownerKey);
     })
     .then((gaiaUrls) => {
+      if (gaiaUrls.hasOwnProperty('error')) {
+        return JSONStringify({
+          'profileUrls': gaiaUrls,
+          'txInfo': broadcastResult
+        }, true);
+      }
       return JSONStringify({
         'profileUrls': gaiaUrls.dataUrls, 
         'txInfo': broadcastResult
@@ -1635,14 +1634,14 @@ function register(network: Object, args: Array<string>) {
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
  *  supercedes gaiaHubUrl
  */
-function register_subdomain(network: Object, args: Array<string>) {
+function registerSubdomain(network: Object, args: Array<string>) {
   const name = args[0];
   const ownerKey = args[1];
   const gaiaHubUrl = args[2];
   const registrarUrl = args[3];
 
   const address = getPrivateKeyAddress(network, ownerKey);
-  const mainnetAddress = coerceMainnetAddress(address)
+  const mainnetAddress = network.coerceMainnetAddress(address)
   const emptyProfile = {type: '@Person', account: []};
   const onChainName = name.split('.').slice(-2).join('.');
   const subName = name.split('.')[0];
@@ -1696,9 +1695,14 @@ function register_subdomain(network: Object, args: Array<string>) {
         network, zonefile, 'profile.json', signedProfileData, ownerKey);
     })
     .then((gaiaUrls) => {
-      return JSONStringify({
-        'profileUrls': gaiaUrls.dataUrls, 
-      });
+      if (gaiaUrls.hasOwnProperty('error')) {
+        return JSONStringify(gaiaUrls, true);
+      }
+      else {
+        return JSONStringify({
+          'profileUrls': gaiaUrls.dataUrls, 
+        });
+      }
     });
 
   if (!safetyChecks) {
@@ -1783,7 +1787,7 @@ function profileVerify(network: Object, args: Array<string>) {
 
   // need to coerce mainnet 
   if (publicKeyOrAddress.match(ADDRESS_PATTERN)) {
-    publicKeyOrAddress = coerceMainnetAddress(publicKeyOrAddress);
+    publicKeyOrAddress = network.coerceMainnetAddress(publicKeyOrAddress);
   }
   
   const profileString = fs.readFileSync(profilePath).toString();
@@ -1821,7 +1825,7 @@ function gaiaUpload(network: Object,
                     gaiaData: string,
                     privateKey: string) {
   const ownerAddress = getPrivateKeyAddress(network, privateKey);
-  const ownerAddressMainnet = coerceMainnetAddress(ownerAddress); 
+  const ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress); 
   return blockstack.connectToGaiaHub(gaiaHubURL, canonicalPrivateKey(privateKey))
     .then((hubConfig) => {
       if (hubConfig.address !== ownerAddressMainnet) {
@@ -1841,12 +1845,20 @@ function gaiaUpload(network: Object,
  * @gaiaPath (string) the path to the file to store in Gaia
  * @gaiaData (string) the data to store
  * @privateKey (string) the hex-encoded private key
- * @return a promise with {'dataUrls': [urls to the data]}
+ * @return a promise with {'dataUrls': [urls to the data]}, or {'error': ...}
  */
 function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string, 
   gaiaData: string, privateKey: string) : Promise<*> {
   
-  const zonefile = parseZoneFile(nameZonefile);
+  let zonefile = null;
+  try {
+    zonefile = parseZoneFile(nameZonefile);
+  } catch (error) {
+    return Promise.resolve().then(() => {
+      return {'error': 'Failed to parse zone file' }
+    });
+  }
+
   const gaiaProfileUrls = zonefile.uri.map((uriRec) => uriRec.target);
   const gaiaUrls = gaiaProfileUrls.map((gaiaProfileUrl) => {
     const urlInfo = URL.parse(gaiaProfileUrl);
@@ -1877,28 +1889,76 @@ function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string,
 }
 
 /*
- * Store a signed profile for a name.
+ * Store a signed profile for a name or an address.
  * * verify that the profile was signed by the name's owner address
  * * verify that the private key matches the name's owner address
  *
  * Assumes that the URI records are all Gaia hubs
  *
- * @name (string) name to get the profile
+ * @nameOrAddress (string) name or address that owns the profile
  * @path (string) path to the signed profile token
  * @privateKey (string) owner private key for the name
+ * @gaiaUrl (string) OPTINOAL: if name is not given, then this is the Gaia hub URL to use
  */
 function profileStore(network: Object, args: Array<string>) {
-  const name = args[0];
+  const nameOrAddress = args[0];
   const signedProfilePath = args[1];
   const privateKey = args[2];
+  const gaiaHubUrl = args[3];
+
   const signedProfileData = fs.readFileSync(signedProfilePath).toString();
 
   const ownerAddress = getPrivateKeyAddress(network, privateKey);
-  const ownerAddressMainnet = coerceMainnetAddress(ownerAddress);
+  let ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress);
 
-  const lookupPromise = network.getNameInfo(name);
+  let lookupPromise = null;
+
+  if (nameOrAddress.match(ADDRESS_PATTERN)) {
+    if (!gaiaHubUrl) {
+      printUsage();
+      process.exit(1);
+    }
+
+    // this is an address 
+    if (ownerAddressMainnet !== network.coerceMainnetAddress(nameOrAddress)) {
+      return Promise.resolve().then(() => {
+        return {'error': 'Private key does not match address'};
+      });
+    }
+
+    // fake zone file which can be parsed back into
+    // the address holder's gaia hub URL
+    const fakeZoneFile = {
+      '$origin': 'placeholder.id',
+      '$ttl': 3600,
+      'uri': [
+        {
+          'name': '_http._tcp',
+          'priority': 10,
+          'weight': 1,
+          'target': `${gaiaHubUrl}/hub/${ownerAddressMainnet}/profile.json`
+        }
+      ]
+    }
+
+    const fakeZoneFileTemplate = '{$origin}\n{$ttl}\n{uri}\n'
+    const fakeZoneFileText = ZoneFile.makeZoneFile(fakeZoneFile, fakeZoneFileTemplate);
+
+    // noop 
+    lookupPromise = Promise.resolve().then(() => {
+      return {
+        'address': ownerAddressMainnet,
+        'zonefile': fakeZoneFileText
+      };
+    });
+  }
+  else {
+    // this is a name
+    lookupPromise = network.getNameInfo(nameOrAddress);
+  }
+
   const verifyProfilePromise = profileVerify(network, [signedProfilePath, ownerAddressMainnet]);
-    
+   
   return Promise.all([lookupPromise, verifyProfilePromise])
     .then(([nameInfo, verifiedProfile]) => {
       if (safetyChecks && 
@@ -1907,13 +1967,18 @@ function profileStore(network: Object, args: Array<string>) {
           `private key address ${ownerAddress}`);
       }
       if (!nameInfo.zonefile) {
-        throw new Error(`Could not load zone file for '${name}'`)
+        throw new Error(`Could not load zone file for '${nameOrAddress}'`)
       }
       return gaiaUploadAll(
         network, nameInfo.zonefile, 'profile.json', signedProfileData, privateKey);
     })
     .then((gaiaUrls) => {
-      return JSONStringify({'profileUrls': gaiaUrls.dataUrls});
+      if (gaiaUrls.hasOwnProperty('error')) {
+        return JSONStringify(gaiaUrls, true);
+      }
+      else {
+        return JSONStringify({'profileUrls': gaiaUrls.dataUrls});
+      }
     });
 }
 
@@ -2201,7 +2266,7 @@ const COMMANDS = {
   'profile_store': profileStore,
   'profile_verify': profileVerify,
   'register': register,
-  'register_subdomain': register_subdomain,
+  'register_subdomain': registerSubdomain,
   'renew': renew,
   'revoke': revoke,
   'send_tokens': sendTokens,
