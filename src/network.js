@@ -36,6 +36,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     this.priceUnits = priceUnits
     this.receiveFeesPeriod = receiveFeesPeriod
     this.gracePeriod = gracePeriod
+    this.optAlwaysCoerceAddress = false
   }
 
   isMainnet() : boolean {
@@ -44,6 +45,25 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
   isTestnet() : boolean {
     return this.layer1.pubKeyHash === bitcoin.networks.testnet.pubKeyHash;
+  }
+
+  setCoerceMainnetAddress(value: boolean) {
+    this.optAlwaysCoerceAddress = value;
+  }
+
+  coerceMainnetAddress(address: string) : string {
+    const addressInfo = bitcoin.address.fromBase58Check(address);
+    const addressHash = addressInfo.hash
+    const addressVersion = addressInfo.version;
+    let newVersion = 0;
+
+    if (addressVersion === this.layer1.pubKeyHash) {
+      newVersion = 0;
+    }
+    else if (addressVersion === this.layer1.scriptHash) {
+      newVersion = 5;
+    }
+    return bitcoin.address.toBase58Check(addressHash, newVersion);
   }
 
   coerceAddress(address: string) : string {
@@ -194,7 +214,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
-
     // TODO: update getNamespaceBurnAddress() to take an optional receive-fees-period
     // override with CLI option
     if (this.namespaceBurnAddress && useCLI) {
@@ -216,13 +235,28 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       let address = '1111111111111111111114oLvT2' // default burn address
       if (namespaceInfo.version === 2) {
         // pay-to-namespace-creator if this namespace is less than $receiveFeesPeriod blocks old
-        if (namespaceInfo.reveal_block + this.receiveFeesPeriod >= blockHeight) {
+        if (namespaceInfo.reveal_block + this.receiveFeesPeriod > blockHeight) {
+          console.log(`${namespaceInfo.reveal_block} + ${this.receiveFeesPeriod} >= ${blockHeight}`);
           address = namespaceInfo.address
         }
       }
       return address
     })
     .then(address => this.coerceAddress(address))
+  }
+
+  getNameInfo(name: string) {
+    // optionally coerce addresses
+    return super.getNameInfo(name)
+      .then((nameInfo) => {
+        if (this.optAlwaysCoerceAddress) {
+          nameInfo = Object.assign(nameInfo, {
+            'address': this.coerceMainnetAddress(nameInfo.address)
+          });
+        }
+
+        return nameInfo;
+      });
   }
 
   getZonefile(zonefileHash: string) {
