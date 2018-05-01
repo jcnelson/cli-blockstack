@@ -42,7 +42,7 @@ const CONFIG_REGTEST_DEFAULTS = {
   utxoServiceUrl: 'http://localhost:18332'
 };
 
-const PUBLIC_TESTNET_HOST = '13.65.207.163';
+const PUBLIC_TESTNET_HOST = 'testnet.blockstack.org';
 // const PUBLIC_TESTNET_HOST = '127.0.0.1';
 
 const CONFIG_TESTNET_DEFAULTS = {
@@ -355,7 +355,7 @@ const CLI_ARGS = {
       items: [
         {
           type: "string",
-          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}`,
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}|${ADDRESS_PATTERN}`,
         },
         {
           type: "string",
@@ -364,7 +364,12 @@ const CLI_ARGS = {
           type: "string",
           pattern: PRIVATE_KEY_PATTERN
         },
+        {
+          type: "string",
+        }
       ],
+      minItems: 3,
+      maxItems: 4,
     },
     profile_verify: {
       type: "array",
@@ -769,8 +774,13 @@ Command reference
     profile_sign PATH PRIVATE_KEY
                         Sign profile JSON with a given key.
 
-    profile_store NAME PATH PRIVATE_KEY
-                        Store a signed profile to a name's Gaia hub
+    profile_store NAME_OR_ADDRESS PATH PRIVATE_KEY [GAIA_HUB]
+                        Store a signed profile.  If NAME_OR_ADDRESS is a registered
+                        name or subdomain, then the profile is signed with PRIVATE_KEY
+                        and upload to the Gaia hub(s) in the name's zone file.
+                        If NAME_OR_ADDRESS is an address, then the profile is signed
+                        with PRIVATE_KEY and uploaded to the given Gaia hub URL
+                        (GAIA_HUB).
 
     profile_verify PATH PUBLIC_KEY_OR_ADDRESS
                         Verify a signed profile with a public key or address. 
