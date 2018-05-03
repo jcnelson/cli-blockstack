@@ -28,9 +28,9 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
               priceToPay: number | null, priceUnits: string | null, 
               receiveFeesPeriod: number | null, gracePeriod: number | null) {
 
-    super(network.blockstackAPIUrl, network.broadcastServiceUrl, network.btc, network.layer1);
-    this.consensusHash = consensusHash;
-    this.feeRate = feeRate;
+    super(network.blockstackAPIUrl, network.broadcastServiceUrl, network.btc, network.layer1)
+    this.consensusHash = consensusHash
+    this.feeRate = feeRate
     this.namespaceBurnAddress = namespaceBurnAddress
     this.priceToPay = priceToPay
     this.priceUnits = priceUnits
@@ -40,85 +40,85 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   isMainnet() : boolean {
-    return this.layer1.pubKeyHash === bitcoin.networks.bitcoin.pubKeyHash;
+    return this.layer1.pubKeyHash === bitcoin.networks.bitcoin.pubKeyHash
   }
 
   isTestnet() : boolean {
-    return this.layer1.pubKeyHash === bitcoin.networks.testnet.pubKeyHash;
+    return this.layer1.pubKeyHash === bitcoin.networks.testnet.pubKeyHash
   }
 
   setCoerceMainnetAddress(value: boolean) {
-    this.optAlwaysCoerceAddress = value;
+    this.optAlwaysCoerceAddress = value
   }
 
   coerceMainnetAddress(address: string) : string {
-    const addressInfo = bitcoin.address.fromBase58Check(address);
+    const addressInfo = bitcoin.address.fromBase58Check(address)
     const addressHash = addressInfo.hash
-    const addressVersion = addressInfo.version;
-    let newVersion = 0;
+    const addressVersion = addressInfo.version
+    let newVersion = 0
 
     if (addressVersion === this.layer1.pubKeyHash) {
-      newVersion = 0;
+      newVersion = 0
     }
     else if (addressVersion === this.layer1.scriptHash) {
-      newVersion = 5;
+      newVersion = 5
     }
-    return bitcoin.address.toBase58Check(addressHash, newVersion);
+    return bitcoin.address.toBase58Check(addressHash, newVersion)
   }
 
   coerceAddress(address: string) : string {
     // TODO: move to blockstack.js
-    const addrInfo = bitcoin.address.fromBase58Check(address);
-    const addrHash = addrInfo.hash;
+    const addrInfo = bitcoin.address.fromBase58Check(address)
+    const addrHash = addrInfo.hash
     if (addrInfo.version === bitcoin.networks.bitcoin.pubKeyHash ||
         addrInfo.version === bitcoin.networks.testnet.pubKeyHash) {
       // p2pkh address
-      return bitcoin.address.toBase58Check(addrHash, this.layer1.pubKeyHash);
+      return bitcoin.address.toBase58Check(addrHash, this.layer1.pubKeyHash)
     } else if (addrInfo.version === bitcoin.networks.bitcoin.scriptHash ||
             addrInfo.version === bitcoin.networks.testnet.scriptHash) {
       // p2sh address
-      return bitcoin.address.toBase58Check(addrHash, this.layer1.scriptHash);
+      return bitcoin.address.toBase58Check(addrHash, this.layer1.scriptHash)
     }
     else {
-      throw new Error(`Unknown address version of ${address}`);
+      throw new Error(`Unknown address version of ${address}`)
     }
   }
 
   getFeeRate() : Promise<number> {
     if (this.feeRate) {
       // override with CLI option
-      return Promise.resolve(this.feeRate);
+      return Promise.resolve(this.feeRate)
     }
     if (this.isTestnet()) {
       // in regtest mode 
       return Promise.resolve(Math.floor(0.00001000 * SATOSHIS_PER_BTC))
     }
-    return super.getFeeRate();
+    return super.getFeeRate()
   }
 
   getConsensusHash() {
     // override with CLI option
     if (this.consensusHash) {
-      return new Promise((resolve) => resolve(this.consensusHash));
+      return new Promise((resolve) => resolve(this.consensusHash))
     }
-    return super.getConsensusHash();
+    return super.getConsensusHash()
   }
 
   getGracePeriod() {
     if (this.gracePeriod) {
-      return this.gracePeriod;
+      return this.gracePeriod
     }
-    return super.getGracePeriod();
+    return super.getGracePeriod()
   }
 
   getNamePriceV1(fullyQualifiedName: string) : Promise<*> {
     // fall back to blockstack.js
-    return super.getNamePrice(fullyQualifiedName);
+    return super.getNamePrice(fullyQualifiedName)
   }
 
   getNamespacePriceV1(namespaceID: string) : Promise<*> {
     // fall back to blockstack.js 
-    return super.getNamespacePrice(namespaceID);
+    return super.getNamespacePrice(namespaceID)
   }
 
   getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
@@ -133,7 +133,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         const result = {
           units: namePrice.units,
           amount: bigi.fromByteArrayUnsigned(namePrice.amount)
-        };
+        }
         return result
       })
   }
@@ -148,7 +148,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         const result = {
           units: namespacePrice.units,
           amount: bigi.fromByteArrayUnsigned(namespacePrice.amount)
-        };
+        }
         return result
       })
   }
@@ -156,39 +156,39 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   getNamePriceCompat(fullyQualifiedName: string) : Promise<*> {
     // handle v1 or v2 
     return Promise.resolve().then(() => {
-      return this.getNamePriceV2(fullyQualifiedName);
+      return this.getNamePriceV2(fullyQualifiedName)
     })
     .catch(() => {
       return this.getNamePriceV1(fullyQualifiedName)
         .then((namePriceSatoshis) => {
           if (!namePriceSatoshis) {
-            throw new Error(`Failed to get price for ${fullyQualifiedName}`);
+            throw new Error(`Failed to get price for ${fullyQualifiedName}`)
           }
           return {
             units: 'BTC',
             amount: bigi.fromByteArrayUnsigned(String(namePriceSatoshis))
-          };
-        });
-    });
+          }
+        })
+    })
   }
 
   getNamespacePriceCompat(namespaceID: string) : Promise<*> {
     // handle v1 or v2 
     return Promise.resolve().then(() => {
-      return this.getNamespacePriceV2(namespaceID);
+      return this.getNamespacePriceV2(namespaceID)
     })
     .catch(() => {
       return this.getNamespacePriceV1(namespaceID)
         .then((namespacePriceSatoshis) => {
           if (!namespacePriceSatoshis) {
-            throw new Error(`Failed to get price for ${namespaceID}`);
+            throw new Error(`Failed to get price for ${namespaceID}`)
           }
           return {
             units: 'BTC',
             amount: bigi.fromByteArrayUnsigned(String(namespacePriceSatoshis))
-          };
-        });
-    });
+          }
+        })
+    })
   }
 
   getNamePrice(name: string) {
@@ -197,9 +197,9 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       return new Promise((resolve) => resolve({
         units: String(this.priceUnits),
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
-      }));
+      }))
     }
-    return this.getNamePriceCompat(name);
+    return this.getNamePriceCompat(name)
   }
 
   getNamespacePrice(namespaceID: string) {
@@ -208,16 +208,16 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       return new Promise((resolve) => resolve({
         units: String(this.priceUnits),
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
-      }));
+      }))
     }
-    return this.getNamespacePriceCompat(namespaceID);
+    return this.getNamespacePriceCompat(namespaceID)
   }
 
   getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
     // TODO: update getNamespaceBurnAddress() to take an optional receive-fees-period
     // override with CLI option
     if (this.namespaceBurnAddress && useCLI) {
-      return new Promise((resolve) => resolve(this.namespaceBurnAddress));
+      return new Promise((resolve) => resolve(this.namespaceBurnAddress))
     }
 
     return Promise.all([
@@ -236,7 +236,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       if (namespaceInfo.version === 2) {
         // pay-to-namespace-creator if this namespace is less than $receiveFeesPeriod blocks old
         if (namespaceInfo.reveal_block + this.receiveFeesPeriod > blockHeight) {
-          console.log(`${namespaceInfo.reveal_block} + ${this.receiveFeesPeriod} >= ${blockHeight}`);
+          console.log(`${namespaceInfo.reveal_block} + ${this.receiveFeesPeriod} >= ${blockHeight}`)
           address = namespaceInfo.address
         }
       }
@@ -252,11 +252,11 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         if (this.optAlwaysCoerceAddress) {
           nameInfo = Object.assign(nameInfo, {
             'address': this.coerceMainnetAddress(nameInfo.address)
-          });
+          })
         }
 
-        return nameInfo;
-      });
+        return nameInfo
+      })
   }
 
   getZonefile(zonefileHash: string) {
@@ -266,29 +266,29 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       .catch((e) => {
         if (e.message === 'Bad response status: 404') {
           // make 404's return null
-          return null;
+          return null
         }
         else {
-          throw e;
+          throw e
         }
-      });
+      })
   }
 
   getBlockchainNameRecord(name: string) : Promise<*> {
     // TODO: send to blockstack.js 
-    const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`;
+    const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`
     return fetch(url)
       .then(resp => resp.json())
       .then((nameInfo) => {
         // coerce all addresses
-        let fixedAddresses = {};
+        let fixedAddresses = {}
         for (let addrAttr of ['address', 'importer_address', 'recipient_address']) {
           if (nameInfo.hasOwnProperty(addrAttr) && nameInfo[addrAttr]) {
-            fixedAddresses[addrAttr] = this.coerceAddress(nameInfo[addrAttr]);
+            fixedAddresses[addrAttr] = this.coerceAddress(nameInfo[addrAttr])
           }
         }
-        return Object.assign(nameInfo, fixedAddresses);
-    });
+        return Object.assign(nameInfo, fixedAddresses)
+    })
   }
 
   getNameHistory(name: string, 
@@ -296,35 +296,35 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
                  endHeight: number | null) : Promise<*> {
 
     // TODO: send to blockstack.js 
-    let url = `${this.blockstackAPIUrl}/v1/names/${name}/history`;
+    let url = `${this.blockstackAPIUrl}/v1/names/${name}/history`
     if (!!startHeight) {
-      url += `?start_block=${startHeight}`;
+      url += `?start_block=${startHeight}`
     }
     if (!!endHeight) {
-      url += `&end_block=${endHeight}`;
+      url += `&end_block=${endHeight}`
     }
     return fetch(url)
       .then(resp => resp.json())
       .then((historyInfo) => {
         // coerce all addresses 
-        let fixedHistory = {};
+        let fixedHistory = {}
         for (let historyBlock of Object.keys(historyInfo)) {
           let fixedHistoryList = []
           for (let historyEntry of historyInfo[historyBlock]) {
-            let fixedAddresses = {};
-            let fixedHistoryEntry = null; 
+            let fixedAddresses = {}
+            let fixedHistoryEntry = null 
             for (let addrAttr of ['address', 'importer_address', 'recipient_address']) {
               if (historyEntry.hasOwnProperty(addrAttr) && historyEntry[addrAttr]) {
-                fixedAddresses[addrAttr] = this.coerceAddress(historyEntry[addrAttr]);
+                fixedAddresses[addrAttr] = this.coerceAddress(historyEntry[addrAttr])
               }
             }
-            fixedHistoryEntry = Object.assign(historyEntry, fixedAddresses);
-            fixedHistoryList.push(fixedHistoryEntry);
+            fixedHistoryEntry = Object.assign(historyEntry, fixedAddresses)
+            fixedHistoryList.push(fixedHistoryEntry)
           }
-          fixedHistory[historyBlock] = fixedHistoryList;
+          fixedHistory[historyBlock] = fixedHistoryList
         }
-        return fixedHistory;
-      });
+        return fixedHistory
+      })
   }
 
   getAccountStatus(address: string, tokenType: string) : Promise<*> {
@@ -339,14 +339,18 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
           return resp.json()
         }
       })
-      .then(accountStatus => 
+      .then(accountStatus => {
+        if (accountStatus.error) {
+          throw new Error(`Unable to get account status: ${accountStatus}`)
+        }
+
         // coerce all addresses, and convert credit/debit to biginteger
         Object.assign({}, accountStatus, {
           address: this.coerceAddress(accountStatus.address),
           debit_value: bigi.fromByteArrayUnsigned(String(accountStatus.debit_value)),
           credit_value: bigi.fromByteArrayUnsigned(String(accountStatus.credit_value))
         })
-      )
+      })
   }
 
   getAccountHistoryPage(address: string,
@@ -355,59 +359,94 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
                         page: number) : Promise<*> {
     // TODO: send to blockstack.js 
     const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?` +
-                          `startblock=${startBlockHeight}&endblock=${endBlockHeight}&page=${page}`;
+                          `startblock=${startBlockHeight}&endblock=${endBlockHeight}&page=${page}`
     return fetch(url)
-      .then(resp => resp.json())
+      .then(resp => {
+        if (resp.status === 404) {
+          throw new Error("Account not found")
+        } else if (resp.status != 200) {
+          throw new Error(`Bad response status: ${resp.status}`)
+        } else {
+          return resp.json()
+        }
+      })
       .then((historyList) => {
+        if (historyList.error) {
+          throw new Error(`Unable to get account history page: ${historyList.error}`)
+        }
         // coerse all addresses 
         return historyList.map((histEntry) => {
-          histEntry.address = this.coerceAddress(histEntry.address);
-          return histEntry;
-        });
-      });
+          histEntry.address = this.coerceAddress(histEntry.address)
+          return histEntry
+        })
+      })
   }
 
   getAccountAt(address: string, blockHeight: number) : Promise<*> {
     // TODO: send to blockstack.js 
-    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/${blockHeight}`;
+    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/${blockHeight}`
     return fetch(url)
-      .then(resp => resp.json())
+      .then(resp => {
+        if (resp.status === 404) {
+          throw new Error("Account not found")
+        } else if (resp.status != 200) {
+          throw new Error(`Bad response status: ${resp.status}`)
+        } else {
+          return resp.json()
+        }
+      })
       .then((historyList) => {
+        if (historyList.error) {
+          throw new Error(`Unable to get historic account state: ${historyList.error}`)
+        }
         // coerce all addresses 
         return historyList.map((histEntry) => {
-          histEntry.address = this.coerceAddress(histEntry.address);
-          return histEntry;
-        });
-      });
+          histEntry.address = this.coerceAddress(histEntry.address)
+          return histEntry
+        })
+      })
   }
 
   getAccountTokens(address: string) : Promise<*> {
     // TODO: send to blockstack.js 
     return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/tokens`)
       .then(resp => {
-        if (resp.status === 200) {
-          return resp.json().then(tokenList => tokenList.tokens)
-        } else {
+        if (resp.status === 404) {
+          throw new Error("Account not found")
+        } else if (resp.status != 200) {
           throw new Error(`Bad response status: ${resp.status}`)
+        } else {
+          return resp.json()
         }
+      })
+      .then((tokenList) => {
+        if (tokenList.error) {
+          throw new Error(`Unable to get token list: ${tokenList.error}`)
+        }
+
+        return tokenList
       })
   }
 
   getAccountBalance(address: string, tokenType: string) : Promise<*> {
     // TODO: send to blockstack.js 
     return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/balance`)
-      .then((resp) => {
-        if (resp.status === 200) {
-          return resp.json()
-            .then((tokenBalance) => bigi.fromByteArrayUnsigned(tokenBalance.balance))
-        } else if (resp.status === 404) {
-          // talking to an older blockstack core node without the accounts API
-          return Promise.resolve().then(() => bigi.fromByteArrayUnsigned('0'))
-        } else {
+      .then(resp => {
+        if (resp.status === 404) {
+          throw new Error("Account not found")
+        } else if (resp.status != 200) {
           throw new Error(`Bad response status: ${resp.status}`)
+        } else {
+          return resp.json()
         }
       })
-  }
+      .then((tokenBalance) => {
+        if (tokenBalance.error) {
+          throw new Error(`Unable to get account balance: ${tokenBalance.error}`)
+        }
+        return bigi.fromByteArrayUnsigned(tokenBalance)
+      })
+    }
 }
 
 /*
@@ -419,15 +458,15 @@ export function getNetwork(configData: Object, regTest: boolean)
     const network = new blockstack.network.LocalRegtest(
       configData.blockstackAPIUrl, configData.broadcastServiceUrl, 
       new blockstack.network.BitcoindAPI(configData.utxoServiceUrl,
-        { username: 'blockstack', password: 'blockstacksystem' }));
+        { username: 'blockstack', password: 'blockstacksystem' }))
 
-    return network;
+    return network
   } else {
     const network = new blockstack.network.BlockstackNetwork(
       configData.blockstackAPIUrl, configData.broadcastServiceUrl,
-      new blockstack.network.BlockchainInfoApi(configData.utxoServiceUrl));
+      new blockstack.network.BlockchainInfoApi(configData.utxoServiceUrl))
 
-    return network;
+    return network
   }
 }
   
