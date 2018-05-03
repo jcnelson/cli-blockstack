@@ -33,6 +33,9 @@ import {
   printUsage,
   checkArgs,
   loadConfig,
+  makeCommandUsageString,
+  makeAllCommandsList,
+  USAGE,
   DEFAULT_CONFIG_PATH,
   DEFAULT_CONFIG_REGTEST_PATH,
   DEFAULT_CONFIG_TESTNET_PATH,
@@ -2334,7 +2337,13 @@ export function CLIMain() {
   if (!cmdArgs.success) {
     console.error(cmdArgs.error);
     if (cmdArgs.usage) {
-      printUsage();
+      console.log(USAGE);
+      if (cmdArgs.command) {
+        console.log(makeCommandUsageString(cmdArgs.command));
+      }
+      else {
+        console.log(makeAllCommandsList());
+      }
     }
     process.exit(1);
   }
@@ -2347,7 +2356,9 @@ export function CLIMain() {
 
     const consensusHash = opts['C'];
     const integration_test = opts['i'];
-    const testnet = opts['t']
+    const testnet = opts['t'];
+    const apiUrl = opts['H'];
+    const transactionBroadcasterUrl = opts['T']
 
     if (integration_test) {
       BLOCKSTACK_TEST = integration_test
@@ -2365,14 +2376,20 @@ export function CLIMain() {
     const networkType = testnet ? 'testnet' : (integration_test ? 'regtest' : 'mainnet');
 
     const configData = loadConfig(configPath, networkType);
-      
+     
     // wrap command-line options
     const blockstackNetwork = new CLINetworkAdapter(
         getNetwork(configData, (!!BLOCKSTACK_TEST || !!integration_test || !!testnet)),
         consensusHash, feeRate, namespaceBurnAddr,
-        priceToPay, priceUnits, receiveFeesPeriod, gracePeriod);
+        priceToPay, priceUnits, receiveFeesPeriod, gracePeriod, 
+        apiUrl, transactionBroadcasterUrl);
 
     blockstack.config.network = blockstackNetwork;
+
+    if (cmdArgs.command === 'help') {
+      console.log(makeCommandUsageString(cmdArgs.args[0]));
+      process.exit(0);
+    }
 
     const method = COMMANDS[cmdArgs.command];
     method(blockstackNetwork, cmdArgs.args)

@@ -262,6 +262,20 @@ const CLI_ARGS = {
       help: 'Get the current zone file for a Blockstack ID',
       group: 'Peer Services',
     },
+    help: {
+      type: 'array',
+      items: [
+        {
+          name: 'command',
+          type: 'string',
+          realtype: 'command',
+        },
+      ],
+      minItems: 0,
+      maxItems: 1,
+      help: 'Get the usage string for a CLI command',
+      group: 'CLI',
+    },
     lookup: {
       type: "array",
       items: [
@@ -949,7 +963,7 @@ const CLI_ARGS = {
 };
 
 // usage string for built-in options
-const USAGE = `Usage: ${process.argv[1]} [options] command [command arguments]
+export const USAGE = `Usage: ${process.argv[1]} [options] command [command arguments]
 Options can be:
     -c                  Path to a config file (defaults to
                         ${DEFAULT_CONFIG_PATH})
@@ -981,12 +995,15 @@ Options can be:
     -G GRACE_PERIOD     Number of blocks in which a name can be renewed after it
                         expires (requires -i)
 
+    -H URL              Use an alternative Blockstack Core node.
+
     -N PAY2NS_PERIOD    Number of blocks in which a namespace receives the registration
                         and renewal fees after it is created (requires -i)
 
     -P PRICE            Use the given price to pay for names or namespaces
                         (requires -i)
 
+    -T URL              Use an alternative Blockstack transaction broadcaster.
 `;
 
 /*
@@ -1060,10 +1077,9 @@ function formatCommandHelpLines(commandName: string, commandArgs: Array<Object>)
 }
 
 /*
- * Make the usage documentation
+ * Get the set of commands grouped by command group
  */
-export function makeUsageString(usageString: string) : string {
-  let res = `${USAGE}\nCommand reference\n`;
+function getCommandGroups() : Object {
   let groups = {};
   const commands = Object.keys(CLI_ARGS.properties);
   for (let i = 0; i < commands.length; i++) {
@@ -1082,8 +1098,69 @@ export function makeUsageString(usageString: string) : string {
       }));
     }
   }
+  return groups;
+}
 
+/*
+ * Make all commands list
+ */
+export function makeAllCommandsList() : string {
+  const groups = getCommandGroups();
   const groupNames = Object.keys(groups).sort();
+
+  let res = `All commands (run '${process.argv[1]} help COMMAND' for details):\n`;
+  for (let i = 0; i < groupNames.length; i++) {
+    res += `  ${groupNames[i]}: `;
+    let cmds = [];
+    for (let j = 0; j < groups[groupNames[i]].length; j++) {
+      cmds.push(groups[groupNames[i]][j].command);
+    }
+
+    // wrap at 80 characters
+    const helpLineSpaces = formatHelpString(4, 70, cmds.join(' '));
+    const helpLineCSV = '    ' + helpLineSpaces.split('\n    ')
+      .map((line) => line.trim().replace(/ /g, ', ')).join('\n    ') + '\n';
+
+    res += '\n' + helpLineCSV;
+    res += '\n';
+  }
+  return res.trim();
+}
+
+/*
+ * Make a usage string for a single command
+ */
+export function makeCommandUsageString(command: string) : string {
+  let res = "";
+  const commandInfo = CLI_ARGS.properties[command];
+  if (!commandInfo || command === 'help') {
+    return makeAllCommandsList();
+  }
+
+  const groups = getCommandGroups();
+  const groupNames = Object.keys(groups).sort();
+  const help = commandInfo.help;
+  
+  const cmdFormat = formatCommandHelpLines(command, commandInfo.items);
+  const formattedHelp = formatHelpString(2, 78, help);
+
+  // make help string for one command 
+  res += `Command: ${command}\n`;
+  res += `Usage:\n`;
+  res += `${cmdFormat.raw}\n`;
+  res += `${cmdFormat.kw}\n`;
+  res += formattedHelp;
+  return res;
+}
+
+/*
+ * Make the usage documentation
+ */
+export function makeUsageString(usageString: string) : string {
+  let res = `${USAGE}\n\nCommand reference\n`;
+  const groups = getCommandGroups();
+  const groupNames = Object.keys(groups).sort();
+
   for (let i = 0; i < groupNames.length; i++) {
     const groupName = groupNames[i];
     const groupCommands = groups[groupName];
@@ -1126,7 +1203,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'eitUxC:F:B:P:D:G:N:') : Object {
+                           opts: string = 'eitUxC:F:B:P:D:G:N:H:T:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);
@@ -1295,6 +1372,7 @@ type checkArgsSuccessType = {
 type checkArgsFailType = {
   'success': false,
   'error': string,
+  'command': string,
   'usage': boolean
 };
 
@@ -1304,7 +1382,8 @@ export function checkArgs(argList: Array<string>)
      return {
        'success': false,
        'error': 'No command given',
-       'usage': true
+       'usage': true,
+       'command': '',
      }
   }
 
@@ -1315,7 +1394,8 @@ export function checkArgs(argList: Array<string>)
      return {
        'success': false,
        'error': `Unrecognized command '${commandName}'`,
-       'usage': true
+       'usage': true,
+       'command': commandName,
      };
   }
 
@@ -1324,7 +1404,8 @@ export function checkArgs(argList: Array<string>)
     return {
       'success': false,
       'error': parsedCommandArgs.error,
-      'usage': true
+      'usage': true,
+      'command': commandName,
     };
   }
 
@@ -1340,7 +1421,8 @@ export function checkArgs(argList: Array<string>)
      return {
        'success': false,
        'error': 'Invalid command arguments',
-       'usage': true
+       'usage': true,
+       'command': commandName,
      };
   }
 
