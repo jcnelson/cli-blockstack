@@ -433,7 +433,8 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/balance`)
       .then(resp => {
         if (resp.status === 404) {
-          throw new Error("Account not found")
+          // talking to an older blockstack core node without the accounts API
+          return Promise.resolve().then(() => bigi.fromByteArrayUnsigned('0'))
         } else if (resp.status != 200) {
           throw new Error(`Bad response status: ${resp.status}`)
         } else {
