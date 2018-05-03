@@ -26,9 +26,15 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   constructor(network: blockstack.network.BlockstackNetwork, consensusHash: string | null,
               feeRate: number | null, namespaceBurnAddress: string | null,
               priceToPay: number | null, priceUnits: string | null, 
-              receiveFeesPeriod: number | null, gracePeriod: number | null) {
+              receiveFeesPeriod: number | null, gracePeriod: number | null,
+              altAPIUrl: string | null, altTransactionBroadcasterUrl: string | null) {
 
-    super(network.blockstackAPIUrl, network.broadcastServiceUrl, network.btc, network.layer1)
+    const apiUrl = altAPIUrl ? altAPIUrl : network.blockstackAPIUrl;
+    const txbUrl = altTransactionBroadcasterUrl ? 
+                   altTransactionBroadcasterUrl : 
+                   network.broadcastServiceUrl;
+
+    super(apiUrl, txbUrl, network.btc, network.layer1)
     this.consensusHash = consensusHash
     this.feeRate = feeRate
     this.namespaceBurnAddress = namespaceBurnAddress
