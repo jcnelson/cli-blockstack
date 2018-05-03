@@ -1275,10 +1275,6 @@ export function getCommandArgs(command: string, argsList: Array<string>) {
     }
   }
 
-  console.log(orderedArgs);
-  console.log(foundArgs);
-  console.log(mergedArgs);
-
   return {
     'status': true,
     'arguments': mergedArgs
