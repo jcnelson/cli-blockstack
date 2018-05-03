@@ -12,8 +12,12 @@ export const NAME_PATTERN =
 export const NAMESPACE_PATTERN = 
   '^([0-9a-z_-]{1,19})$'
 
-export const ADDRESS_PATTERN = 
-  '^([123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,35})$';
+export const ADDRESS_CHARS = 
+  '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,35}';
+
+export const ADDRESS_PATTERN = `^(${ADDRESS_CHARS})$`;
+
+export const ID_ADDRESS_PATTERN = `^ID-${ADDRESS_CHARS}$`;
 
 export const PRIVATE_KEY_PATTERN = 
   '^([0-9a-f]{64,66})$'
@@ -63,572 +67,888 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
+          name: 'message_hash',
           type: "string",
+          realtype: 'zonefile_hash',
           pattern: ZONEFILE_HASH_PATTERN,
         },
         {
+          name: 'owner_key',
           type: "string",
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 2,
       maxItems: 2,
+      help: 'Broadcast a message on the blockchain for subscribers to read.  ' +
+      'The MESSAGE_HASH argument must be the hash of a previously-announced zone file.  ' +
+      'The OWNER_KEY used to sign the transaction must correspond to the Blockstack ID ' +
+      'to which other users have already subscribed.',
+      group: 'Peer Services'
     },
     balance: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: ADDRESS_PATTERN,
-      },
+      items: [ 
+        {
+          name: 'address',
+          type: "string",
+          realtype: 'address',
+          pattern: ADDRESS_PATTERN,
+        }
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Query the balance of an account.  Returns the balances of each kind of token ' +
+      'that the account owns.  The balances will be in the *smallest possible units* of the ' +
+      'token (i.e. satoshis for BTC, microStacks for Stacks, etc.).',
+      group: 'Account Management',
     },
     get_account_history: {
       type: "array",
       items: [
         {
+          name: 'address',
           type: "string",
+          realtype: 'address',
           pattern: ADDRESS_PATTERN,
         },
         {
+          name: 'startblock',
           type: "string",
+          realtype: "integer",
           pattern: "^[0-9]+$",
         },
         {
+          name: 'endblock',
           type: "string",
+          realtype: "integer",
           pattern: "^[0-9]+$",
         },
         {
+          name: 'page',
           type: "string",
+          realtype: "integer",
           pattern: "^[0-9]+$",
         },
       ],
       minItems: 4,
       maxItems: 4,
+      help: 'Query the history of account debits and credits over a given block range.  ' +
+      'Returns the history one page at a time.  An empty result indicates that the page ' +
+      'number has exceeded the number of historic operations in the given block range.',
+      group: 'Account Management',
     },
     get_account_at: {
       type: "array",
       items: [
         {
+          name: 'address',
           type: "string",
+          realtype: 'address',
           pattern: ADDRESS_PATTERN,
         },
         {
+          name: 'blocknumber',
           type: "string",
+          realtype: 'integer',
           pattern: "^[0-9]+$",
         },
       ],
       minItems: 2,
       maxItems: 2,
+      help: 'Query the list of token debits and credits on a given address that occurred ' +
+      'at a particular block height.  Does not include BTC debits and credits.',
+      group: 'Account Management',
     },
     get_blockchain_record: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: `^${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockstack_id',
+          pattern: `^${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the low-level blockchain-hosted state for a Blockstack ID.  This command ' +
+      'is used mainly for debugging and diagnostics.  You should not rely on it to be stable.',
+      group: 'Querying Blockstack IDs'
     },
     get_blockchain_history: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockstack_id',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+      ],
       minItems: 1,
-      maxItems: 3,
+      maxItems: 1,
+      help: 'Get the low-level blockchain-hosted history of operations on a Blocktack ID.  ' +
+      'This command is used mainly for debugging and diagnostics, and is not guaranteed to ' +
+      'be stable across releases.',
+      group: 'Querying Blockstack IDs',
     },
     get_namespace_blockchain_record: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: NAMESPACE_PATTERN,
-      },
+      items: [
+        {
+          name: 'namespace_id',
+          type: "string",
+          realtype: 'namespace_id',
+          pattern: NAMESPACE_PATTERN,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the low-level blockchain-hosted state for a Blockstack namespace.  This command ' +
+      'is used mainly for debugging and diagnostics, and is not guaranteed to be stable across ' +
+      'releases.',
+      group: 'Namespace Operations',
     },
     get_owner_keys: {
       type: "array",
       items: [
         {
+          name: 'backup_phrase',
           type: "string",
+          realtype: 'backup_phrase',
         },
         {
+          name: 'index',
           type: "string",
+          realtype: 'integer',
           pattern: "^[0-9]+$",
         }
       ],
       minItems: 1,
-      maxItems: 2
+      maxItems: 2,
+      help: 'Get the list of owner private keys and ID-addresses from a 12-word backup phrase.  ' +
+      'Pass non-zero values for INDEX to generate the sequence of ID-addresses that can be used ' +
+      'to own Blockstack IDs.',
+      group: 'Key Management',
     },
     get_payment_key: {
       type: "array",
       items: [
         {
+          name: 'backup_phrase',
           type: "string",
+          realtype: '12_words',
         },
       ],
       minItems: 1,
-      maxItems: 1
+      maxItems: 1,
+      help: 'Get the payment private key from a 12-word backup phrase.',
+      group: 'Key Management',
     },
     get_zonefile: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockchain_id',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the current zone file for a Blockstack ID',
+      group: 'Peer Services',
     },
     lookup: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockchain_id',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get and authenticate the profile and zone file for a Blockstack ID',
+      group: 'Querying Blockstack IDs',
     },
     names: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: ADDRESS_PATTERN,
-      },
+      items: [
+        {
+          name: 'id_address',
+          type: "string",
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the list of Blockstack IDs owned by an ID-address.',
+      group: 'Querying Blockstack IDs',
     },
     make_keychain: {
       type: "array",
-      items: {
-        type: 'string',
-      },
+      items: [
+        {
+          name: 'backup_phrase',
+          type: 'string',
+          realtype: '12_word',
+        },
+      ],
       minItems: 0,
       maxItems: 1,
+      help: 'Generate the owner and payment private keys, optionally from a given 12-word ' +
+      'backup phrase.  If no backup phrase is given, a new one will be generated.',
+      group: 'Key Management',
     },
     name_import: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: "string",
+          realtype: 'blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'address',
           type: "string",
-          pattern: ADDRESS_PATTERN,
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
         },
         {
+          name: 'zonefile_hash',
           type: "string",
+          realtype: 'zonefile_hash',
           pattern: ZONEFILE_HASH_PATTERN,
         },
         {
+          name: 'reveal_key',
           type: "string",
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 4,
-      maxItems: 4
+      maxItems: 4,
+      help: 'Import a name into a namespace you revealed.  The REVEAL_KEY must be the same as ' +
+      'the key that revealed the namespace.  You can only import a name into a namespace if ' +
+      'the namespace has not yet been launched (i.e. via `namespace_ready`), and if the ' +
+      'namespace was revealed less than a year ago.',
+      group: 'Namespace Operations',
     },
     namespace_preorder: {
       type: 'array',
       items: [
         {
+          name: 'namespace_id',
           type: 'string',
+          realtype: 'namespace_id',
           pattern: NAMESPACE_PATTERN,
         },
         {
+          name: 'address',
           type: 'string',
+          realtype: 'address',
           pattern: ADDRESS_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 3,
       maxItems: 3,
+      help: 'Preorder a namespace.  This is the first of three steps to creating a namespace.  ' +
+      'Once this transaction is confirmed, you will need to use the `namespace_reveal` command ' +
+      'to reveal the namespace (within 24 hours, or 144 blocks).',
+      group: 'Namespace Operations',
     },
     namespace_reveal: {
       type: 'array',
       items: [
         {
+          name: 'namespace_id',
           type: 'string',
+          realtype: 'namespace_id',
           pattern: NAMESPACE_PATTERN,
         },
         {
+          name: 'reveal_address',
           type: 'string',
+          realtype: 'address',
           pattern: ADDRESS_PATTERN,
         },
         {
           // version
+          name: 'version',
           type: 'string',
+          realtype: '2-byte-integer',
           pattern: INT_PATTERN,
         },
         {
           // lifetime
+          name: 'lifetime',
           type: 'string',
+          realtype: '4-byte-integer',
           pattern: INT_PATTERN,
         },
         {
           // coeff
+          name: 'coefficient',
           type: 'string',
+          realtype: '1-byte-integer',
           pattern: INT_PATTERN,
         },
         {
           // base
+          name: 'base',
           type: 'string',
+          realtype: '1-byte-integer',
           pattern: INT_PATTERN,
         },
         {
           // buckets
+          name: 'price_buckets',
           type: 'string',
+          realtype: 'csv-of-16-nybbles',
           pattern: '^([0-9]{1,2},){15}[0-9]{1,2}$'
         },
         {
           // non-alpha discount
+          name: 'nonalpha_discount',
           type: 'string',
+          realtype: 'nybble',
           pattern: INT_PATTERN,
         },
         {
           // no-vowel discount
+          name: 'no_vowel_discount',
           type: 'string',
+          realtype: 'nybble',
           pattern: INT_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 10,
       maxItems: 10,
+      help: 'Reveal a preordered namespace, and set the price curve and payment options.  ' +
+      'This is the second of three steps required to create a namespace, and must be done ' +
+      'shortly after the associated "namespace_preorder" command.',
+      group: 'Namespace Operations'
     },
     namespace_ready: {
       type: 'array',
       items: [
         {
+          name: 'namespace_id',
           type: 'string',
+          realtype: 'namespace_id',
           pattern: NAMESPACE_PATTERN,
         },
         {
+          name: 'reveal_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 2,
       maxItems: 2,
+      help: 'Launch a revealed namespace.  This is the third and final step of creating a namespace.  ' +
+      'Once launched, you will not be able to import names anymore.',
+      group: 'Namespace Operations'
     },
     price: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: NAME_PATTERN,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockchain_id',
+          pattern: NAME_PATTERN,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the price of a name',
+      group: 'Querying Blockstack IDs',
     },
     price_namespace: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: NAMESPACE_PATTERN,
-      },
+      items: [
+        {
+          name: 'namespace_id',
+          type: "string",
+          realtype: 'namespace_id',
+          pattern: NAMESPACE_PATTERN,
+        },
+      ],
       minItems: 1,
       maxItems: 1,
+      help: 'Get the price of a namespace',
+      group: 'Namespace Operations',
     },
     profile_sign: {
       type: "array",
       items: [
         {
+          name: 'profile',
           type: "string",
+          realtype: 'path',
         },
         {
+          name: 'owner_key',
           type: "string",
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN
         }
       ],
       minItems: 2,
       maxItems: 2,
+      help: 'Sign a profile on disk with a given owner private key.  Print out the signed profile JWT.',
+      group: 'Profiles',
     },
     profile_store: {
       type: "array",
       items: [
         {
+          name: 'user_id',
           type: "string",
-          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}|${ADDRESS_PATTERN}`,
+          realtype: 'name-or-id-address',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}|${ID_ADDRESS_PATTERN}`,
         },
         {
+          name: 'profile',
           type: "string",
+          realtype: 'path',
         },
         {
+          name: 'owner_key',
           type: "string",
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN
         },
         {
+          name: 'gaia_hub',
           type: "string",
+          realtype: 'url',
         }
       ],
       minItems: 3,
       maxItems: 4,
+      help: 'Store a profile on disk to a Gaia hub.  USER_ID can be either a Blockstack ID or ' +
+      'an ID-address.  If USER_ID is an ID-address, then GAIA_HUB is a required argument.  ' +
+      'If USER_ID is a Blockstack ID, then the GAIA_HUB will be looked from using the Blockstack ID\'s ' +
+      'zonefile.',
+      group: 'Profiles'
     },
     profile_verify: {
       type: "array",
       items: [
         {
+          name: 'profile',
           type: "string",
+          realtype: 'path',
         },
         {
-          type: "string",
-          pattern: `${ADDRESS_PATTERN}|${PUBLIC_KEY_PATTERN}`
+          name: 'id_address',
+          type: 'string',
+          realtype: 'id-address',
+          pattern: `${ID_ADDRESS_PATTERN}|${PUBLIC_KEY_PATTERN}`,
         }
-      ]
+      ],
+      minItems: 2,
+      maxItems: 2,
+      help: 'Verify a profile on disk using a name or a public key (ID_ADDRESS).',
+      group: 'Profiles',
     },
     renew: {
       type: "array",
       items: [
         {
+          name: 'blockchain_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'new_id_address',
           type: 'string',
-          pattern: ADDRESS_PATTERN,
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
         },
         {
+          name: 'zonefile',
           type: 'string',
+          realtype: 'path',
         },
         {
+          name: 'zonefile_hash',
           type: 'string',
+          realtype: 'zonefile_hash',
           pattern: ZONEFILE_HASH_PATTERN,
         },
       ],
       minItems: 3,
       maxItems: 6,
+      help: 'Renew a name.  Optionally transfer it to a new owner address (NEW_ID_ADDRESS), ' +
+      'and optionally load up and give it a new zone file on disk (ZONEFILE).  You will need ' +
+      'to later use "zonefile_push" to replicate the zone file to the Blockstack peer network ' +
+      'once the transaction confirms.',
+      group: 'Blockstack ID Management',
     },
     register: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
-          type: 'string'
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
         },
         {
+          name: 'zonefile',
           type: 'string',
+          realtype: 'path',
         },
       ],
       minItems: 4,
       maxItems: 5,
+      help: 'Register a name the easy way.  This will generate and send two transactions, ' +
+      'and generate and replicate a zone file with the given Gaia hub URL (GAIA_HUB).  ' +
+      'You can optionally specify a path to a custom zone file on disk (ZONEFILE).',
+      group: 'Blockstack ID Management',
     },
     register_subdomain: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'blockchain_id',
           pattern: SUBDOMAIN_PATTERN,
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'gaia_hub',
           type: 'string',
+          realtype: 'url',
         },
         {
+          name: 'registrar',
           type: 'string',
+          realtype: 'url',
         },
         {
+          name: 'zonefile',
           type: 'string',
+          realtype: 'path',
         },
       ],
       minItems: 4,
       maxItems: 5,
+      help: 'Register a subdomain.  This will generate and sign a subdomain zone file record ' +
+      'with the given GAIA_HUB URL and send it to the given subdomain registrar (REGISTRAR).',
+      group: 'Blockstack ID Management',
     },
     revoke: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 3,
       maxItems: 3,
+      help: 'Revoke a name.  This renders it unusable until it expires (if ever).',
+      group: 'Blockstack ID Management',
     },
     send_tokens: {
       type: "array",
       items: [
         {
+          name: 'address',
           type: 'string',
+          realtype: 'address',
           pattern: ADDRESS_PATTERN,
         },
         {
+          name: 'type',
           type: 'string',
-          pattern: `${NAMESPACE_PATTERN}|^STACKS$`,
+          realtype: 'token-type',
+          pattern: `^${NAMESPACE_PATTERN}$|^STACKS$`
         },
         {
+          name: 'amount',
           type: 'string',
+          realtype: 'integer',
           pattern: '^[0-9]+$',
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'memo',
           type: 'string',
+          realtype: 'string',
           pattern: '^.{0,34}$',
         },
       ],
       minItems: 4,
       maxItems: 5,
+      help: 'Send tokens to the given ADDRESS.  The only supported TOKEN-TYPE is "STACKS".  Optionally ' +
+      'include a memo string (MEMO) up to 34 characters long.',
+      group: 'Account Management',
     },
     transfer: {
       type: "array",
       items: [
         {
+          name: 'blockchain_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'new_id_address',
           type: 'string',
-          pattern: ADDRESS_PATTERN,
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
         },
         {
+          name: 'keep_zonefile',
           type: 'string',
+          realtype: 'true-or-false',
           pattern: '^true$|^false$',
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
       ],
       minItems: 5,
       maxItems: 5,
+      help: 'Transfer a Blockstack ID to a new address (NEW_ID_ADDRESS).  Optionally preserve ' +
+      'its zone file (KEEP_ZONEFILE).',
+      group: 'Blockstack ID Management',
     },
     tx_preorder: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'id_address',
           type: 'string',
-          pattern: ADDRESS_PATTERN,
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN
         },
       ],
       minItems: 3,
       maxItems: 3,
+      help: 'Generate and send NAME_PREORDER transaction, for a Blockstack ID to be owned ' +
+      'by a given ID_ADDRESS.',
+      group: 'Blockstack ID Management',
     },
     tx_register: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
+          name: 'id_address',
           type: 'string',
-          pattern: ADDRESS_PATTERN,
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'zonefile',
           type: 'string',
+          realtype: 'path',
         },
         {
+          name: 'zonefile_hash',
           type: 'string',
+          realtype: 'zoenfile_hash',
           pattern: ZONEFILE_HASH_PATTERN,
         },
       ],
       minItems: 3,
       maxItems: 5,
+      help: 'Generate and send a NAME_REGISTRATION transaction, assigning the given BLOCKSTACK_ID ' +
+      'to the given ID_ADDRESS.  Optionally pair the Blockstack ID with a zone file (ZONEFILE) or ' +
+      'the hash of the zone file (ZONEFILE_HASH).  You will need to push the zone file to the peer ' +
+      'network after the transaction confirms (i.e. with "zonefile_push").',
+      group: 'Blockstack ID Management',
     },
     update: {
       type: "array",
       items: [
         {
+          name: 'blockstack_id',
           type: 'string',
+          realtype: 'on-chain-blockchain_id',
           pattern: NAME_PATTERN,
         },
         {
-          type: 'string'
+          name: 'zonefile',
+          type: 'string',
+          realtype: 'path',
         },
         {
+          name: 'owner_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'payment_key',
           type: 'string',
+          realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
+          name: 'zonefile_hash',
           type: 'string',
+          realtype: 'zonefile_hash',
           pattern: ZONEFILE_HASH_PATTERN,
         },
       ],
       minItems: 4,
       maxItems: 5,
+      help: 'Update the zonefile for an on-chain Blockstack ID.  Once the transaction confirms, ' +
+      'you will need to push the zone file to the Blockstack peer network with "zonefile_push."',
+      group: 'Blockstack ID Management'
     },
     whois: {
       type: "array",
-      items: {
-        type: "string",
-        pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}`,
-      },
+      items: [
+        {
+          name: 'blockstack_id',
+          type: "string",
+          realtype: 'blockchain_id',
+          pattern: NAME_PATTERN + "|"+ SUBDOMAIN_PATTERN,
+        },
+      ],
       minItems: 1,
-      maxItems: 1
+      maxItems: 1,
+      help: 'Look up the zone file and owner of a Blockstack ID',
+      group: 'Querying Blockstack IDs',
     },
     zonefile_push: {
       type: "array",
-      items: {
-        type: "string"
-      },
+      items: [
+        {
+          name: 'zonefile',
+          type: "string",
+          realtype: 'path',
+        },
+      ],
       minItems: 1,
-      maxItems: 1
+      maxItems: 1,
+      help: 'Push a zone file on disk to the Blockstack peer network.',
+      group: 'Peer Services',
     },
   },
   additionalProperties: false,
   strict: true
 };
 
-// usage string
+// usage string for built-in options
 const USAGE = `Usage: ${process.argv[1]} [options] command [command arguments]
 Options can be:
     -c                  Path to a config file (defaults to
@@ -667,163 +987,135 @@ Options can be:
     -P PRICE            Use the given price to pay for names or namespaces
                         (requires -i)
 
-Command reference
-  Querying Blockstack IDs
-    get_blockchain_record BLOCKSTACK_ID
-                        Get the full on-chain record for a Blockstack ID
-
-    get_blockchain_history BLOCKSTACK_ID [START_BLOCK [END_BLOCK]]
-                        Get the history of operations for a Blockstack ID
-
-    lookup BLOCKSTACK_ID
-                        Look up a Blockstack ID's profile and zonefile
-
-    price BLOCKSTACK_ID
-                        Find out how much a Blockstack ID costs, and in
-                        what currency units.
-
-    whois BLOCKSTACK_ID 
-                        Get basic name and zonefile information for a
-                        Blockstack ID
-
-  Querying the Blockchain
-    names ADDR          List all Blockstack IDs owned by an account address
-
-
-  Namespace Operations
-    namespace_preorder NAMESPACE REVEAL_ADDR PAYMENT_KEY
-                        Preorder a namespace.  EXPENSIVE!
-
-    namespace_reveal NAMESPACE REVEAL_ADDR VERSION LIFETIME COEFF BASE
-      BUCKET_CSV NONALPHA_DISCOUNT NOVOWEL_DISCOUNT PAYMENT_KEY
-                        Reveal a namespace with the given parameters
-
-    namespace_ready NAMESPACE REVEAL_KEY
-                        Launch a revealed namespace
-
-    name_import NAME RECIPIENT_ADDR ZONEFILE_HASH IMPORT_KEY
-                        Import a name into a namespace
-
-    price_namespace NAMESPACE_ID
-                        Find out how much a Blockstack namespace costs, and in
-                        what currency units.
-
-  Peer Services
-    announce MESSAGE_HASH PRIVATE_KEY
-                        Broadcast a message on the blockchain for subscribers to read
-
-    get_zonefile NAME
-                        Get a Blockstack ID's raw zonefile
-
-    zonefile_push ZONEFILE_DATA_OR_PATH
-                        Push an already-announced zone file to the Atlas network
-
-
-  Blockstack ID Management
-    register BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY GAIA_HUB_URL [ZONE_FILE]
-                        Register a Blockstack ID to a given address.  This
-                        will automatically generate and propagate the two
-                        blockchain transactions required to do this, and
-                        will automatically propagate the given zone file
-                        to the Blockstack peer network once the transactions
-                        confirm.  If ZONE_FILE is not given, then one will
-                        be generated automatically from the GAIA_HUB_URL.
-
-    register_subdomain BLOCKSTACK_ID OWNER_KEY GAIA_HUB_URL [REGISTRAR_URL [ZONE_FILE]]
-                        Register a subdomain (a.k.a. sponsored name).  This will
-                        automatically look up the registrar for the on-chain name,
-                        and request that it insert a new subdomain record with the
-                        given address and zone file.  If ZONE_FILE is not given,
-                        one will be generated automatically with GAIA_HUB_URL.
-                        The request will be sent to REGISTRAR_URL if given; otherwise
-
-    revoke BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY
-                        Revoke a Blockstack ID
-
-    renew BLOCKSTACK_ID OWNER_KEY PAYMENT_KEY [ADDR [ZONEFILE [ZONEFILE_HASH]]]
-                        Renew a name, optionally sending it to a new
-                        address and giving it a new zone file.  If ZONEFILE_HASH
-                        is given, then ZONEFILE will be ignored.
-
-    transfer BLOCKSTACK_ID NEW_ADDR KEEP_ZONEFILE OWNER_KEY PAYMENT_KEY
-                        Transfer a name to a new address.  If KEEP_ZONEFILE
-                        is True, then the Blockstack ID's zone file will
-                        be preserved.
-
-    update BLOCKSTACK_ID ZONEFILE OWNER_KEY PAYMENT_KEY [ZONEFILE_HASH]
-                        Update a Blockstack ID's zone file.  If ZONEFILE_HASH
-                        is given, ZONEFILE will be ignored.
-
-  Advanced Blockstack ID Management
-    tx_preorder BLOCKSTACK_ID ADDR PAYMENT_KEY
-                        (ADVANCED) Generate and send a NAME_PREORDER transaction
-                        that will preorder a Blockstack ID to a given address.
-                        Consider using the 'register' command instead.
-
-    tx_register BLOCKSTACK_ID ADDR PAYMENT_KEY [ZONEFILE [ZONEFILE_HASH]]
-                        (ADVANCED) Generate and send a NAME_REGISTRATION
-                        transaction that will register a preordered Blockstack
-                        ID to a given address and optionally give it its first
-                        zone file.  If ZONEFILE_HASH is given, then ZONEFILE
-                        will be ignored.  The zone file will not be propagated
-                        to the Blockstack peer network--you will have to do that
-                        yourself with the 'zonefile_push' command.  Consider
-                        using the 'register' command instead.
-
-  Profile Management
-    profile_sign PATH PRIVATE_KEY
-                        Sign profile JSON with a given key.
-
-    profile_store NAME_OR_ADDRESS PATH PRIVATE_KEY [GAIA_HUB]
-                        Store a signed profile.  If NAME_OR_ADDRESS is a registered
-                        name or subdomain, then the profile is signed with PRIVATE_KEY
-                        and upload to the Gaia hub(s) in the name's zone file.
-                        If NAME_OR_ADDRESS is an address, then the profile is signed
-                        with PRIVATE_KEY and uploaded to the given Gaia hub URL
-                        (GAIA_HUB).
-
-    profile_verify PATH PUBLIC_KEY_OR_ADDRESS
-                        Verify a signed profile with a public key or address. 
-
-  Key Management
-    get_owner_keys 12_WORD_PHRASE [MAX_INDEX]
-                        Get the owner private key(s) and ID-addresses from a
-                        12-word backup phrase.  If MAX_INDEX is given, then 
-                        then generate the owner keys and ID-addresses from 
-                        index 0 to MAX_INDEX.  Otherwise, only generate the
-                        key and ID-address at index 0.
-
-    get_payment_key 12_WORD_PHRASE
-                        Get the payment private key of a 12-word backup phrase.
-
-    make_keychain [12_WORD_PHRASE]
-                        Make a 12-word phrase, and output the ECDSA private keys
-                        and addresses for the owner and payment keys for the
-                        Blockstack keychain.  If 12_WORD_PHRASE is given, then use
-                        it instead of making a new one.
-
-  Account Management
-    balance ADDRESS
-                        Get the balances of all of an address's tokens
-
-    get_account_at ADDRESS START_BLOCK_HEIGHT END_BLOCK_HEIGHT PAGE
-                        Get the state(s) of an account at a particular block height
-
-    get_account_history ADDRESS PAGE
-                        Get a page of an account's history
-
-    send_tokens ADDRESS TOKEN_TYPE AMOUNT PRIVKEY [MEMO]
-                        Send tokens to an account address using the private key of
-                        an existing account.  TOKEN_TYPE is the name of the namespace
-                        that defines the token, or "STACKS".  Optionally include
-                        a memo in the transaction of up to 34 bytes.
 `;
+
+/*
+ * Format help
+ */
+function formatHelpString(indent: number, limit: number, helpString: string) : string {
+  const lines = helpString.split(' \n' ).filter((line) => line.length > 0);
+  let buf = "";
+  let pad = "";
+  for (let i = 0; i < indent; i++) {
+    pad += ' ';
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    let linebuf = pad.slice();
+    const words = lines[i].split(' ').filter((word) => word.length > 0);
+
+    for (let j = 0; j < words.length; j++) {
+      if (linebuf.split('\n').slice(-1)[0].length + 1 + words[j].length > limit) {
+        linebuf += '\n';
+        linebuf += pad;
+      }
+      linebuf += words[j] + ' ';
+    }
+
+    buf += linebuf + '\n';
+  }
+  return buf;
+}
+
+/*
+ * Format command usage lines.
+ * Generate two strings:
+ * raw string: 
+ *    COMMAND ARG_NAME ARG_NAME ARG_NAME
+ * keyword string:
+ *    COMMAND --arg_name TYPE
+ *            --arg_name TYPE
+ *            --arg_name TYPE
+ */
+function formatCommandHelpLines(commandName: string, commandArgs: Array<Object>) : Object {
+  let rawUsage = '';
+  let kwUsage = '';
+  let kwPad = '';
+
+  rawUsage = `  ${commandName} `;
+  for (let i = 0; i < commandArgs.length; i++) {
+    if (!commandArgs[i].name) {
+      console.log(commandName);
+      console.log(commandArgs[i]);
+    }
+    rawUsage += `${commandArgs[i].name.toUpperCase()} `;
+  }
+
+  kwUsage = `  ${commandName} `;
+  for (let i = 0; i < commandName.length + 3; i++) {
+    kwPad += ' ';
+  }
+  
+  for (let i = 0; i < commandArgs.length; i++) {
+    if (!commandArgs[i].realtype) {
+      console.log(commandName)
+      console.log(commandArgs[i])
+    }
+    kwUsage += `--${commandArgs[i].name} ${commandArgs[i].realtype.toUpperCase()}`;
+    kwUsage += '\n';
+    kwUsage += kwPad;
+  }
+
+  return {'raw': rawUsage, 'kw': kwUsage};
+}
+
+/*
+ * Make the usage documentation
+ */
+export function makeUsageString(usageString: string) : string {
+  let res = `${USAGE}\nCommand reference\n`;
+  let groups = {};
+  const commands = Object.keys(CLI_ARGS.properties);
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i];
+    const group = CLI_ARGS.properties[command].group;
+    const help = CLI_ARGS.properties[command].help;
+    
+    if (!groups.hasOwnProperty(group)) {
+      groups[group] = [Object.assign({}, CLI_ARGS.properties[command], {
+        'command': command
+      })];
+    }
+    else {
+      groups[group].push(Object.assign({}, CLI_ARGS.properties[command], {
+        'command': command
+      }));
+    }
+  }
+
+  const groupNames = Object.keys(groups).sort();
+  for (let i = 0; i < groupNames.length; i++) {
+    const groupName = groupNames[i];
+    const groupCommands = groups[groupName];
+
+    res += `Command group: ${groupName}\n\n`;
+    for (let j = 0; j < groupCommands.length; j++) {
+      const command = groupCommands[j].command;
+      const help = groupCommands[j].help;
+
+      const commandInfo = CLI_ARGS.properties[command];
+
+      const cmdFormat = formatCommandHelpLines(command, commandInfo.items);
+      const formattedHelp = formatHelpString(4, 76, help);
+
+      res += cmdFormat.raw;
+      res += '\n';
+      res += cmdFormat.kw;
+      res += '\n';
+      res += formattedHelp;
+      res += '\n';
+    }
+    res += '\n';
+  }    
+  
+  return res;
+}
 
 /*
  * Print usage
  */
 export function printUsage() {
-  console.error(USAGE);
+  console.error(makeUsageString(USAGE));
 }
 
 /*
@@ -892,6 +1184,110 @@ export function getCLIOpts(argv: Array<string>,
 
 
 /*
+ * Use the CLI schema to get all positional and keyword args
+ * for a given command.
+ */
+export function getCommandArgs(command: string, argsList: Array<string>) {
+  let commandProps = CLI_ARGS.properties[command].items;
+  if (!Array.isArray(commandProps)) {
+    commandProps = [commandProps];
+  }
+
+  let orderedArgs = [];
+  let foundArgs = {};
+
+  // scan for keywords 
+  for (let i = 0; i < argsList.length; i++) {
+    if (argsList[i].startsWith('--')) {
+      // positional argument 
+      const argName = argsList[i].slice(2);
+      let argValue = null;
+
+      // dup?
+      if (foundArgs.hasOwnProperty(argName)) {
+        return {
+          'status': false,
+          'error': `duplicate argument ${argsList[i]}`,
+        };
+      }
+
+      for (let j = 0; j < commandProps.length; j++) {
+        if (!commandProps[j].hasOwnProperty('name')) {
+          continue;
+        }
+        if (commandProps[j].name === argName) {
+          // found!
+          // end of args?
+          if (i + 1 >= argsList.length) {
+            return {
+              'status': false,
+              'error': `no value for argument ${argsList[i]}`
+            };
+          }
+
+          argValue = argsList[i+1];
+        }
+      }
+
+      if (argValue) {
+        // found something!
+        i += 1;
+        foundArgs[argName] = argValue;
+      }
+      else {
+        return {
+          'status': false,
+          'error': `no such argument ${argsList[i]}`,
+        };
+      }
+    }
+    else {
+      // positional argument
+      orderedArgs.push(argsList[i]);
+    }
+  }
+
+  // merge foundArgs and orderedArgs back into an ordered argument list
+  // that is conformant to the CLI specification.
+  let mergedArgs = [];
+  let orderedArgIndex = 0;
+
+  for (let i = 0; i < commandProps.length; i++) {
+    if (!commandProps[i].hasOwnProperty('name')) {
+      // positional argument
+      if (orderedArgIndex >= orderedArgs.length) {
+        break;
+      }
+      mergedArgs.push(orderedArgs[orderedArgIndex]);
+      orderedArgIndex += 1;
+    }
+    else if (!foundArgs.hasOwnProperty(commandProps[i].name)) {
+      // positional argument 
+      if (orderedArgIndex >= orderedArgs.length) {
+        break;
+      }
+      mergedArgs.push(orderedArgs[orderedArgIndex]);
+      orderedArgIndex += 1;
+    }
+    else {
+      // keyword argument 
+      mergedArgs.push(foundArgs[commandProps[i].name]);
+    }
+  }
+
+  console.log(orderedArgs);
+  console.log(foundArgs);
+  console.log(mergedArgs);
+
+  return {
+    'status': true,
+    'arguments': mergedArgs
+  };
+}
+
+
+
+/*
  * Check command args
  */
 type checkArgsSuccessType = {
@@ -917,7 +1313,7 @@ export function checkArgs(argList: Array<string>)
   }
 
   const commandName = argList[2];
-  const commandArgs = argList.slice(3);
+  const allCommandArgs = argList.slice(3);
 
   if (!CLI_ARGS.properties.hasOwnProperty(commandName)) {
      return {
@@ -926,6 +1322,17 @@ export function checkArgs(argList: Array<string>)
        'usage': true
      };
   }
+
+  const parsedCommandArgs = getCommandArgs(commandName, allCommandArgs);
+  if (!parsedCommandArgs.status) {
+    return {
+      'success': false,
+      'error': parsedCommandArgs.error,
+      'usage': true
+    };
+  }
+
+  const commandArgs = parsedCommandArgs.arguments;
 
   const commands = new Object();
   commands[commandName] = commandArgs;
