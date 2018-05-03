@@ -36,7 +36,8 @@ import {
   DEFAULT_CONFIG_PATH,
   DEFAULT_CONFIG_REGTEST_PATH,
   DEFAULT_CONFIG_TESTNET_PATH,
-  ADDRESS_PATTERN
+  ADDRESS_PATTERN,
+  ID_ADDRESS_PATTERN,
 } from './argparse';
 
 import {
@@ -207,7 +208,12 @@ function priceNamespace(network: Object, args: Array<string>) {
  * @address (string) the address to query
  */
 function names(network: Object, args: Array<string>) {
-  const address = args[0];
+  const IDaddress = args[0];
+  if (!IDaddress.startsWith('ID-')) {
+    throw new Error("Must be an ID-address");
+  }
+
+  const address = IDaddress.slice(3);
   return network.getNamesOwned(address)
     .then(namesList => JSONStringify(namesList));
 }
@@ -316,15 +322,20 @@ function getNameZonefile(network: Object, args: Array<string>) {
  * Generate and optionally send a name-preorder
  * args:
  * @name (string) the name to preorder
- * @address (string) the address to own the name
+ * @IDaddress (string) the address to own the name
  * @paymentKey (string) the payment private key
  * @preorderTxOnly (boolean) OPTIONAL: used internally to only return a tx (overrides CLI)
  */
 function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boolean = false) {
   const name = args[0];
-  const address = args[1];
+  const IDaddress = args[1];
   const paymentKey = args[2];
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
+
+  if (!IDaddress.startsWith('ID-')) {
+    throw new Error("Recipient ID-address must start with ID-");
+  }
+  const address = IDaddress.slice(3);
 
   const namespaceID = name.split('.').slice(-1)[0];
 
@@ -432,7 +443,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
  * Generate and optionally send a name-register
  * args:
  * @name (string) the name to register
- * @address (string) the address that owns this name
+ * @IDaddress (string) the address that owns this name
  * @paymentKey (string) the payment private key
  * @zonefile (string) if given, the raw zone file or the path to the zone file data to use
  * @zonefileHash (string) if given, this is the raw zone file hash to use
@@ -441,8 +452,14 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
  */
 function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boolean = false) {
   const name = args[0];
-  const address = args[1];
+  const IDaddress = args[1];
   const paymentKey = args[2];
+
+  if (!IDaddress.startsWith('ID-')) {
+    throw new Error("Recipient ID-address must start with ID-");
+  }
+  const address = IDaddress.slice(3);
+
   let zonefilePath = null;
   let zonefileHash = null;
   let zonefile = null;
@@ -559,7 +576,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
  * Generate and optionally send a name-update
  * args:
  * @name (string) the name to update
- * @zonefile (string) the zonefile text to use
+ * @zonefile (string) the path to the zonefile to use
  * @ownerKey (string) the owner private key
  * @paymentKey (string) the payment private key
  * @zonefileHash (string) the zone file hash to use, if given
@@ -567,14 +584,21 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
  */
 function update(network: Object, args: Array<string>) {
   const name = args[0];
-  let zonefile = args[1];
+  let zonefilePath = args[1];
   const ownerKey = args[2];
   const paymentKey = args[3];
+
+  let zonefile = null;
   let zonefileHash = null;
+
   if (args.length > 4) {
     zonefileHash = args[4];
-    zonefile = null;
+    zonefilePath = null;
     console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+  }
+
+  if (zonefilePath) {
+    zonefile = fs.readFileSync(zonefilePath).toString();
   }
 
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
@@ -664,19 +688,24 @@ function update(network: Object, args: Array<string>) {
  * Generate and optionally send a name-transfer
  * args:
  * @name (string) the name to transfer
- * @address (string) the new owner address
+ * @IDaddress (string) the new owner address
  * @keepZoneFile (boolean) keep the zone file or not
  * @ownerKey (string) the owner private key
  * @paymentKey (string) the payment private key
  */
 function transfer(network: Object, args: Array<string>) {
   const name = args[0];
-  const address = args[1];
+  const IDaddress = args[1];
   const keepZoneFile = (args[2].toLowerCase() === 'true');
   const ownerKey = args[3];
   const paymentKey = args[4];
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
+
+  if (!IDaddress.startsWith('ID-')) {
+    throw new Error("Recipient ID-address must start with ID-");
+  }
+  const address = IDaddress.slice(3);
 
   const ownerUTXOsPromise = network.getUTXOs(ownerAddress);
   const paymentUTXOsPromise = network.getUTXOs(paymentAddress);
@@ -770,7 +799,7 @@ function transfer(network: Object, args: Array<string>) {
  * @ownerKey (string) the owner private key
  * @paymentKey (string) the payment private key 
  * @address (string) OPTIONAL: the new owner address
- * @zonefile (string) OPTIONAL: the new zone file
+ * @zonefilePath (string) OPTIONAL: the path to the new zone file
  * @zonefileHash (string) OPTINOAL: use the given zonefile hash.  Supercedes zonefile.
  */
 function renew(network: Object, args: Array<string>) {
@@ -782,24 +811,30 @@ function renew(network: Object, args: Array<string>) {
   const namespaceID = name.split('.').slice(-1)[0];
 
   let newAddress = null;
-  let zonefile = null;
+  let zonefilePath = null;
   let zonefileHash = null;
+  let zonefile = null;
 
   if (args.length >= 4) {
-    newAddress = args[3];
+    // ID-address
+    newAddress = args[3].slice(3);
   }
   else {
     newAddress = getPrivateKeyAddress(network, ownerKey);
   }
 
   if (args.length >= 5) {
-    zonefile = args[4];
+    zonefilePath = args[4];
   }
 
   if (args.length >= 6) {
     zonefileHash = args[5];
-    zonefile = null;
+    zonefilePath = null;
     console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+  }
+
+  if (zonefilePath) {
+    zonefile = fs.readFileSync(zonefilePath).toString();
   }
 
   const ownerUTXOsPromise = network.getUTXOs(ownerAddress);
@@ -1344,15 +1379,20 @@ function namespaceReady(network: Object, args: Array<string>) {
 /*
  * Generate and send a name-import transaction
  * @name (string) the name to import
- * @recipientAddr (string) the recipient of the name
+ * @IDrecipientAddr (string) the recipient of the name
  * @zonefileHash (string) the zone file hash
  * @importKey (string) the key to pay for the import
  */
 function nameImport(network: Object, args: Array<string>) {
   const name = args[0];
-  const recipientAddr = args[1];
+  const IDrecipientAddr = args[1];
   const zonefileHash = args[2];
   const importKey = args[3];
+
+  if (!IDrecipientAddr.startsWith('ID-')) {
+    throw new Error("Recipient ID-address must start with ID-");
+  }
+  const recipientAddr = IDrecipientAddr.slice(3);
 
   const namespaceID = name.split('.').slice(-1);
   const importAddress = getPrivateKeyAddress(network, importKey);
@@ -1548,10 +1588,10 @@ function register(network: Object, args: Array<string>) {
 
   // carry out safety checks for preorder and register 
   const preorderSafetyCheckPromise = txPreorder(
-    network, [name, address, paymentKey], true);
+    network, [name, `ID-${address}`, paymentKey], true);
 
   const registerSafetyCheckPromise = txRegister(
-    network, [name, address, paymentKey, zonefile], true);
+    network, [name, `ID-${address}`, paymentKey, zonefile], true);
 
   return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
     .then(([preorderSafetyChecks, registerSafetyChecks]) => {
@@ -1628,7 +1668,6 @@ function register(network: Object, args: Array<string>) {
  * zone file and signed subdomain records to the subdomain registrar.
  * @arg name (string) the name to register
  * @arg ownerKey (string) the hex-encoded owner private key
- * @arg paymentKey (string) the hex-encoded payment key to purchase this name
  * @arg gaiaHubUrl (string) the gaia hub URL to use
  * @arg registrarUrl (string) OPTIONAL the registrar URL
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
@@ -1786,8 +1825,8 @@ function profileVerify(network: Object, args: Array<string>) {
   let publicKeyOrAddress = args[1];
 
   // need to coerce mainnet 
-  if (publicKeyOrAddress.match(ADDRESS_PATTERN)) {
-    publicKeyOrAddress = network.coerceMainnetAddress(publicKeyOrAddress);
+  if (publicKeyOrAddress.match(ID_ADDRESS_PATTERN)) {
+    publicKeyOrAddress = network.coerceMainnetAddress(publicKeyOrAddress.slice(3));
   }
   
   const profileString = fs.readFileSync(profilePath).toString();
@@ -1901,7 +1940,7 @@ function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string,
  * @gaiaUrl (string) OPTINOAL: if name is not given, then this is the Gaia hub URL to use
  */
 function profileStore(network: Object, args: Array<string>) {
-  const nameOrAddress = args[0];
+  let nameOrAddress = args[0];
   const signedProfilePath = args[1];
   const privateKey = args[2];
   const gaiaHubUrl = args[3];
@@ -1912,6 +1951,11 @@ function profileStore(network: Object, args: Array<string>) {
   let ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress);
 
   let lookupPromise = null;
+
+  if (nameOrAddress.startsWith('ID-')) {
+    // ID-address
+    nameOrAddress = nameOrAddress.slice(3);
+  }
 
   if (nameOrAddress.match(ADDRESS_PATTERN)) {
     if (!gaiaHubUrl) {
@@ -1957,7 +2001,8 @@ function profileStore(network: Object, args: Array<string>) {
     lookupPromise = network.getNameInfo(nameOrAddress);
   }
 
-  const verifyProfilePromise = profileVerify(network, [signedProfilePath, ownerAddressMainnet]);
+  const verifyProfilePromise = profileVerify(network, 
+    [signedProfilePath, `ID-${ownerAddressMainnet}`]);
    
   return Promise.all([lookupPromise, verifyProfilePromise])
     .then(([nameInfo, verifiedProfile]) => {
