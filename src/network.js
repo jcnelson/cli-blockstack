@@ -451,7 +451,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         if (tokenBalance.error) {
           throw new Error(`Unable to get account balance: ${tokenBalance.error}`)
         }
-        return bigi.fromByteArrayUnsigned(tokenBalance)
+        return bigi.fromByteArrayUnsigned(tokenBalance.balance)
       })
     }
 }
