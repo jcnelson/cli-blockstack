@@ -305,6 +305,14 @@ function getNamespaceBlockchainRecord(network: Object, args: Array<string>) {
   })
   .then((namespaceInfo) => {
     return JSONStringify(namespaceInfo);
+  })
+  .catch((e) => {
+    if (e.message === 'Namespace not found') {
+      return JSONStringify({'error': 'Namespace not found'}, true);
+    }
+    else {
+      throw e;
+    }
   });
 }
 
@@ -2118,7 +2126,11 @@ function balance(network: Object, args: Array<string>) {
     return network.getAccountTokens(address);
   })
   .then((tokenList) => {
-    const tokenAndBTC = tokenList;
+    let tokenAndBTC = tokenList.tokens;
+    if (!tokenAndBTC) {
+      tokenAndBTC = [];
+    }
+
     tokenAndBTC.push('BTC');
 
     return Promise.all(tokenAndBTC.map((tokenType) => {
@@ -2337,11 +2349,12 @@ export function CLIMain() {
   if (!cmdArgs.success) {
     console.error(cmdArgs.error);
     if (cmdArgs.usage) {
-      console.log(USAGE);
       if (cmdArgs.command) {
         console.log(makeCommandUsageString(cmdArgs.command));
+        console.log(`Use "help" to list all commands.`);
       }
       else {
+        console.log(USAGE);
         console.log(makeAllCommandsList());
       }
     }
