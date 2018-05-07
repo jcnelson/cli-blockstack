@@ -1038,24 +1038,31 @@ function formatHelpString(indent: number, limit: number, helpString: string) : s
  * Format command usage lines.
  * Generate two strings:
  * raw string: 
- *    COMMAND ARG_NAME ARG_NAME ARG_NAME
+ *    COMMAND ARG_NAME ARG_NAME ARG_NAME [OPTINONAL ARG NAME]
  * keyword string:
  *    COMMAND --arg_name TYPE
  *            --arg_name TYPE
- *            --arg_name TYPE
+ *            [--arg_name TYPE]
  */
 function formatCommandHelpLines(commandName: string, commandArgs: Array<Object>) : Object {
   let rawUsage = '';
   let kwUsage = '';
   let kwPad = '';
+  const commandInfo = CLI_ARGS.properties[commandName];
 
   rawUsage = `  ${commandName} `;
   for (let i = 0; i < commandArgs.length; i++) {
     if (!commandArgs[i].name) {
       console.log(commandName);
       console.log(commandArgs[i]);
+      throw new Error(`BUG: command info is missing a "name" field`);
     }
-    rawUsage += `${commandArgs[i].name.toUpperCase()} `;
+    if (i + 1 <= commandInfo.minItems) {
+      rawUsage += `${commandArgs[i].name.toUpperCase()} `;
+    }
+    else {
+      rawUsage += `[${commandArgs[i].name.toUpperCase()}] `;
+    }
   }
 
   kwUsage = `  ${commandName} `;
@@ -1067,8 +1074,14 @@ function formatCommandHelpLines(commandName: string, commandArgs: Array<Object>)
     if (!commandArgs[i].realtype) {
       console.log(commandName)
       console.log(commandArgs[i])
+      throw new Error(`BUG: command info is missing a "realtype" field`);
     }
-    kwUsage += `--${commandArgs[i].name} ${commandArgs[i].realtype.toUpperCase()}`;
+    if (i + 1 <= commandInfo.minItems) {
+      kwUsage += `--${commandArgs[i].name} ${commandArgs[i].realtype.toUpperCase()}`;
+    }
+    else {
+      kwUsage += `[--${commandArgs[i].name} ${commandArgs[i].realtype.toUpperCase()}]`;
+    }
     kwUsage += '\n';
     kwUsage += kwPad;
   }
@@ -1417,7 +1430,7 @@ export function checkArgs(argList: Array<string>)
   const ajv = Ajv();
   const valid = ajv.validate(CLI_ARGS, commands);
   if (!valid) {
-     console.error(ajv.errors);
+     // console.error(ajv.errors);
      return {
        'success': false,
        'error': 'Invalid command arguments',
