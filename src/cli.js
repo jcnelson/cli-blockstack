@@ -2300,19 +2300,60 @@ function sendTokens(network: Object, args: Array<string>) {
 }
 
 /*
+ * Get the number of confirmations of a txid.
+ * args:
+ * @txid (string) the transaction ID as a hex string
+ */
+function getConfirmations(network: Object, args: Array<string>) {
+  const txid = args[0];
+  return Promise.all([network.getBlockHeight(), network.getTransactionInfo(txid)])
+    .then(([blockHeight, txInfo]) => {
+      return JSONStringify({
+        'blockHeight': txInfo.block_height,
+        'confirmations': blockHeight - txInfo.block_height + 1,
+      });
+    })
+    .catch((e) => {
+      if (e.message.toLowerCase() === 'unconfirmed transaction') {
+        return JSONStringify({
+          'blockHeight': 'unconfirmed',
+          'confirmations': 0,
+        });
+      }
+      else {
+        throw e;
+      }
+    });
+}
+
+/*
+ * Get the address of a private key 
+ * args:
+ * @private_key (string) the hex-encoded private key
+ */
+function getKeyAddress(network: Object, args: Array<string>) {
+  const privateKey = args[0];
+  return Promise.resolve().then(() =>
+    getPrivateKeyAddress(network, privateKey)
+  );
+}
+
+/*
  * Global set of commands
  */
 const COMMANDS = {
   'announce': announce,
   'balance': balance,
+  'get_address': getKeyAddress,
   'get_account_at': getAccountAt,
   'get_account_history': getAccountHistory,
   'get_blockchain_record': getNameBlockchainRecord,
   'get_blockchain_history': getNameHistoryRecord,
-  'get_zonefile': getNameZonefile,
+  'get_confirmations': getConfirmations,
   'get_namespace_blockchain_record': getNamespaceBlockchainRecord,
   'get_owner_keys': getOwnerKeys,
   'get_payment_key': getPaymentKey,
+  'get_zonefile': getNameZonefile,
   'lookup': lookup,
   'make_keychain': makeKeychain,
   'names': names,
