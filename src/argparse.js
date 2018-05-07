@@ -34,6 +34,9 @@ export const URL_PATTERN = "^http[s]?://.+$"
 export const SUBDOMAIN_PATTERN =
   '^([0-9a-z_+-]{1,37})\.([0-9a-z_.+-]{3,37})$'
 
+export const TXID_PATTERN = 
+  '^([0-9a-f]{64})$'
+
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
@@ -161,6 +164,21 @@ const CLI_ARGS = {
       'at a particular block height.  Does not include BTC debits and credits.',
       group: 'Account Management',
     },
+    get_address: {
+      type: 'array',
+      items: [
+        {
+          name: 'private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_PATTERN,
+        }
+      ],
+      minItems: 1,
+      maxItems: 1,
+      help: 'Get the address of a private key.',
+      group: 'Key Management',
+    },
     get_blockchain_record: {
       type: "array",
       items: [
@@ -193,6 +211,21 @@ const CLI_ARGS = {
       'This command is used mainly for debugging and diagnostics, and is not guaranteed to ' +
       'be stable across releases.',
       group: 'Querying Blockstack IDs',
+    },
+    get_confirmations: {
+      type: "array",
+      items: [
+        {
+          name: 'txid',
+          type: 'string',
+          realtype: 'transaction_id',
+          pattern: TXID_PATTERN,
+        },
+      ],
+      minItems: 1,
+      maxItems: 1,
+      help: 'Get the number of confirmations for a transaction.',
+      group: 'Peer Services',
     },
     get_namespace_blockchain_record: {
       type: "array",
@@ -253,7 +286,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: "string",
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
         },
       ],
@@ -282,7 +315,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: "string",
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
         },
       ],
@@ -327,7 +360,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: "string",
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -492,7 +525,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: "string",
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: NAME_PATTERN,
         },
       ],
@@ -594,9 +627,9 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'blockchain_id',
+          name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -643,7 +676,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -682,7 +715,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: SUBDOMAIN_PATTERN,
         },
         {
@@ -719,7 +752,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -784,9 +817,9 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'blockchain_id',
+          name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -826,7 +859,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -854,7 +887,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -895,7 +928,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: 'string',
-          realtype: 'on-chain-blockchain_id',
+          realtype: 'on-chain-blockstack_id',
           pattern: NAME_PATTERN,
         },
         {
@@ -934,7 +967,7 @@ const CLI_ARGS = {
         {
           name: 'blockstack_id',
           type: "string",
-          realtype: 'blockchain_id',
+          realtype: 'blockstack_id',
           pattern: NAME_PATTERN + "|"+ SUBDOMAIN_PATTERN,
         },
       ],
@@ -1370,8 +1403,6 @@ export function getCommandArgs(command: string, argsList: Array<string>) {
     'arguments': mergedArgs
   };
 }
-
-
 
 /*
  * Check command args
