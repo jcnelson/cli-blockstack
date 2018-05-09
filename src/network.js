@@ -451,7 +451,11 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         if (tokenBalance.error) {
           throw new Error(`Unable to get account balance: ${tokenBalance.error}`)
         }
-        return bigi.fromByteArrayUnsigned(tokenBalance.balance)
+        let balance = '0'
+        if (tokenBalance && tokenBalance.balance) {
+          balance = tokenBalance.balance
+        }
+        return bigi.fromByteArrayUnsigned(balance)
       })
     }
 }
@@ -471,7 +475,7 @@ export function getNetwork(configData: Object, regTest: boolean)
   } else {
     const network = new blockstack.network.BlockstackNetwork(
       configData.blockstackAPIUrl, configData.broadcastServiceUrl,
-      new blockstack.network.BlockchainInfoApi(configData.utxoServiceUrl))
+      new blockstack.network.InsightClient(`${configData.utxoServiceUrl}/insight-api`))
 
     return network
   }
