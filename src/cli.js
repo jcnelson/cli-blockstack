@@ -2204,6 +2204,97 @@ function getAccountAt(network: Object, args: Array<string>) {
 }
 
 /*
+ * Sends BTC from one private key to another address
+ * args:
+ * @recipientAddress (string) the recipient's address
+ * @amount (string) the amount of BTC to send
+ * @privateKey (string) the private key that owns the BTC
+ */
+function sendBTC(network: Object, args: Array<string>) {
+  const destinationAddress = args[0]
+  const amount = parseInt(args[1])
+  const paymentKeyHex = args[2];
+
+  if (amount <= 5500) {
+    throw new Error("Invalid amount (must be greater than 5500)")
+  }
+
+  const paymentKey = blockstack.PubkeyHashSigner.fromHexString(paymentKeyHex)
+
+  const txPromise = paymentKey.getAddress().then(
+    (paymentAddress) =>
+      Promise.all([network.getUTXOs(paymentAddress), network.getFeeRate()])
+      .then(([utxos, feeRate]) => {
+        const txB = new bitcoinjs.TransactionBuilder(network.layer1)
+        const destinationIndex = txB.addOutput(destinationAddress, 0)
+
+        const change = blockstack.addUTXOsToFund(txB, utxos, amount, feeRate, false)
+
+        let feesToPay = feeRate * blockstack.estimateTXBytes(txB, 0, 0)
+        const feeForChange = feeRate * (blockstack.estimateTXBytes(txB, 0, 1)) - feesToPay
+
+        // it's worthwhile to add a change output
+        if (change > feeForChange) {
+          feesToPay += feeForChange
+          txB.addOutput(paymentAddress, change - feesToPay)
+        }
+
+        if (amount + feesToPay > sumUTXOs(utxos)) {
+          return {
+            'status': false,
+            'error': 'Not enough balance',
+            'feesToPay': feesToPay,
+            'balance': sumUTXOs(utxos),
+            'amount': amount,
+            'required': amount + feesToPay
+          };
+        }
+
+        // we need to manually set the output values now
+        txB.tx.outs[destinationIndex].value = amount
+
+        // ready to sign.
+        let signingPromise = Promise.resolve()
+        for (let i = 0; i < txB.tx.ins.length; i++) {
+          signingPromise = signingPromise.then(
+            () => paymentKey.signTransaction(txB, i))
+        }
+        return signingPromise.then(() => txB)
+      }))
+    .then((signingTxBOrError) => {
+      if (signingTxBOrError.error) {
+        return signingTxBOrError;
+      }
+      return signingTxBOrError.build().toHex();
+    });
+
+  if (txOnly) {
+    return txPromise.then((txOrError) => {
+      if (txOrError.error) {
+        return JSONStringify(txOrError, true);
+      }
+      else {
+        return txOrError;
+      }
+    });
+  }
+  else {
+    return txPromise.then((txOrError) => {
+      if (txOrError.error) {
+        return JSONStringify(txOrError, true);
+      }
+      else {
+        return network.broadcastTransaction(txOrError)
+          .then((txid) => {
+            return txid;
+          });
+      }
+    });
+  }
+}
+
+
+/*
  * Send tokens from one account private key to another account's address.
  * args:
  * @recipientAddress (string) the recipient's account address
@@ -2370,6 +2461,7 @@ const COMMANDS = {
   'register_subdomain': registerSubdomain,
   'renew': renew,
   'revoke': revoke,
+  'send_btc': sendBTC,
   'send_tokens': sendTokens,
   'transfer': transfer,
   'tx_preorder': txPreorder,
