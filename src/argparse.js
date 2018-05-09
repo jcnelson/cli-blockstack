@@ -400,7 +400,7 @@ const CLI_ARGS = {
           pattern: NAMESPACE_PATTERN,
         },
         {
-          name: 'address',
+          name: 'reveal_address',
           type: 'string',
           realtype: 'address',
           pattern: ADDRESS_PATTERN,
