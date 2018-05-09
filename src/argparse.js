@@ -40,7 +40,7 @@ export const TXID_PATTERN =
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
-  utxoServiceUrl: 'https://utxo.blockstack.org',
+  utxoServiceUrl: 'https://blockchain.info'
 };
 
 const CONFIG_REGTEST_DEFAULTS = {
@@ -772,6 +772,33 @@ const CLI_ARGS = {
       maxItems: 3,
       help: 'Revoke a name.  This renders it unusable until it expires (if ever).',
       group: 'Blockstack ID Management',
+    },
+    send_btc: {
+      type: "array",
+      items: [
+        {
+          name: 'recipient_address',
+          type: 'string',
+          realtype: 'address',
+          pattern: ADDRESS_PATTERN,
+        },
+        {
+          name: 'amount',
+          type: 'string',
+          realtype: 'satoshis',
+          pattern: INT_PATTERN,
+        },
+        {
+          name: 'payment_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: 'Send some Bitcoin (in satoshis) from a payment key to an address.',
+      group: 'Account Management'
     },
     send_tokens: {
       type: "array",
