@@ -456,7 +456,7 @@ export function getNetwork(configData: Object, regTest: boolean)
   } else {
     const network = new blockstack.network.BlockstackNetwork(
       configData.blockstackAPIUrl, configData.broadcastServiceUrl,
-      new blockstack.network.InsightClient(`${configData.utxoServiceUrl}/insight-api`))
+      new blockstack.network.BlockchainInfoApi(configData.utxoServiceUrl))
 
     return network
   }
