@@ -118,45 +118,44 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getNamePriceV1(fullyQualifiedName: string) : Promise<*> {
-    // fall back to blockstack.js
-    return super.getNamePrice(fullyQualifiedName)
-  }
-
-  getNamespacePriceV1(namespaceID: string) : Promise<*> {
-    // fall back to blockstack.js 
-    return super.getNamespacePrice(namespaceID)
-  }
-
-  getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
-    return fetch(`${this.blockstackAPIUrl}/v2/prices/names/${fullyQualifiedName}`)
+    // legacy code path
+    return fetch(`${this.blockstackAPIUrl}/v1/prices/names/${fullyQualifiedName}`)
       .then(resp => resp.json())
       .then(resp => resp.name_price)
       .then(namePrice => {
-        if (!namePrice) {
+        if (!namePrice || !namePrice.satoshis) {
           throw new Error(
             `Failed to get price for ${fullyQualifiedName}. Does the namespace exist?`)
         }
         const result = {
-          units: namePrice.units,
-          amount: bigi.fromByteArrayUnsigned(namePrice.amount)
+          units: 'BTC',
+          amount: bigi.fromByteArrayUnsigned(String(namePrice.satoshis))
         }
         return result
       })
   }
 
-  getNamespacePriceV2(namespaceID: string) : Promise<*> {
-    return fetch(`${this.blockstackAPIUrl}/v2/prices/namespaces/${namespaceID}`)
+  getNamespacePriceV1(namespaceID: string) : Promise<*> {
+    return fetch(`${this.blockstackAPIUrl}/v1/prices/namespaces/${namespaceID}`)
       .then(resp => resp.json())
       .then(namespacePrice => {
-        if (!namespacePrice) {
+        if (!namespacePrice || !namespacePrice.satoshis) {
           throw new Error(`Failed to get price for ${namespaceID}`)
         }
         const result = {
-          units: namespacePrice.units,
-          amount: bigi.fromByteArrayUnsigned(namespacePrice.amount)
+          units: 'BTC',
+          amount: bigi.fromByteArrayUnsigned(String(namespacePrice.satoshis))
         }
         return result
       })
+  }
+
+  getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
+    return super.getNamePrice(fullyQualifiedName)
+  }
+
+  getNamespacePriceV2(namespaceID: string) : Promise<*> {
+    return super.getNamespacePrice(namespaceID)
   }
 
   getNamePriceCompat(fullyQualifiedName: string) : Promise<*> {
@@ -166,15 +165,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     })
     .catch(() => {
       return this.getNamePriceV1(fullyQualifiedName)
-        .then((namePriceSatoshis) => {
-          if (!namePriceSatoshis) {
-            throw new Error(`Failed to get price for ${fullyQualifiedName}`)
-          }
-          return {
-            units: 'BTC',
-            amount: bigi.fromByteArrayUnsigned(String(namePriceSatoshis))
-          }
-        })
     })
   }
 
@@ -185,15 +175,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     })
     .catch(() => {
       return this.getNamespacePriceV1(namespaceID)
-        .then((namespacePriceSatoshis) => {
-          if (!namespacePriceSatoshis) {
-            throw new Error(`Failed to get price for ${namespaceID}`)
-          }
-          return {
-            units: 'BTC',
-            amount: bigi.fromByteArrayUnsigned(String(namespacePriceSatoshis))
-          }
-        })
     })
   }
 
