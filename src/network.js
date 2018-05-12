@@ -332,11 +332,12 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         }
 
         // coerce all addresses, and convert credit/debit to biginteger
-        Object.assign({}, accountStatus, {
+        const res = Object.assign({}, accountStatus, {
           address: this.coerceAddress(accountStatus.address),
           debit_value: bigi.fromByteArrayUnsigned(String(accountStatus.debit_value)),
           credit_value: bigi.fromByteArrayUnsigned(String(accountStatus.credit_value))
-        })
+        });
+        return res;
       })
   }
 
