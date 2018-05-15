@@ -58,6 +58,14 @@ let gracePeriod = 5000;
 
 let BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
 
+class SafetyError extends Error {
+  safetyErrors: Object
+  constructor(safetyErrors: Object) {
+    super(JSONStringify(safetyErrors, true));
+    this.safetyErrors = safetyErrors;
+  }
+}
+
 /*
  * JSON stringify helper
  * -- if stdout is a TTY, then pretty-format the JSON
@@ -421,7 +429,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
             isNamespaceReady,
             namePrice,
             STACKSBalance]) => {
-      if (isNameValid && namespaceReady &&
+      if (isNameValid && isNamespaceReady &&
           (isNameAvailable || !nameInfo) &&
           addressCanReceiveName && !isInGracePeriod && paymentBalance >= estimate &&
           trueNamespaceBurnAddress === givenNamespaceBurnAddress &&
@@ -430,7 +438,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
         return {'status': true};
       }
       else {
-        return JSONStringify({
+        return {
           'status': false,
           'error': 'Name cannot be safely preordered',
           'isNameValid': isNameValid,
@@ -445,14 +453,21 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
           'isNamespaceReady': isNamespaceReady,
           'namespaceBurnAddress': givenNamespaceBurnAddress,
           'trueNamespaceBurnAddress': trueNamespaceBurnAddress,
-        }, true);
+        };
       }
     });
 
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        return new Promise((resolve) => resolve(safetyChecksResult));
+        if (preorderTxOnly) {
+          // only care about safety checks or tx 
+          return new Promise((resolve) => resolve(safetyChecksResult));
+        }
+        else {
+          // expect a string either way
+          return new Promise((resolve) => resolve(JSONStringify(safetyChecksResult, true)));
+        }
       }
 
       if (txOnly || preorderTxOnly) {
@@ -579,7 +594,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
         return {'status': true};
       }
       else {
-        return JSONStringify({
+        return {
           'status': false,
           'error': 'Name cannot be safely registered',
           'isNameValid': isNameValid,
@@ -589,14 +604,21 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
           'isNamespaceReady': isNamespaceReady,
           'paymentBalanceBTC': paymentBalance,
           'estimateCostBTC': estimateCost,
-        }, true);
+        };
       }
     });
   
   return safetyChecksPromise
     .then((safetyChecksResult) => {
       if (!safetyChecksResult.status) {
-        return new Promise((resolve) => resolve(safetyChecksResult));
+        if (registerTxOnly) {
+          // only care about safety checks or tx 
+          return new Promise((resolve) => resolve(safetyChecksResult));
+        }
+        else {
+          // expect a string either way
+          return new Promise((resolve) => resolve(JSONStringify(safetyChecksResult, true)));
+        }
       }
 
       if (txOnly || registerTxOnly) {
@@ -1716,6 +1738,17 @@ function register(network: Object, args: Array<string>) {
 
   return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
     .then(([preorderSafetyChecks, registerSafetyChecks]) => {
+      if ((preorderSafetyChecks.hasOwnProperty('status') && !preorderSafetyChecks.status) || 
+          (registerSafetyChecks.hasOwnProperty('status') && !registerSafetyChecks.status)) {
+        // one or both safety checks failed 
+        throw new SafetyError({
+          'status': false,
+          'error': 'Failed to generate one or more transactions',
+          'preorderSafetyChecks': preorderSafetyChecks,
+          'registerSafetyChecks': registerSafetyChecks,
+        });
+      }
+
       // will have only gotten back the raw tx (which we'll discard anyway,
       // since we have to use the right UTXOs)
       return blockstack.transactions.makePreorder(name, address, paymentKey);
@@ -1780,6 +1813,15 @@ function register(network: Object, args: Array<string>) {
         'profileUrls': gaiaUrls.dataUrls, 
         'txInfo': broadcastResult
       });
+    })
+    .catch((e) => {
+      if (e.hasOwnProperty('safetyErrors')) {
+        // safety error; return as JSON 
+        return e.message;
+      }
+      else {
+        throw e;
+      }
     });
 }
 
