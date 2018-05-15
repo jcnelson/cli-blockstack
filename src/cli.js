@@ -10,6 +10,7 @@ const URL = require('url')
 const bip39 = require('bip39')
 const crypto = require('crypto')
 const ZoneFile = require('zone-file')
+const RIPEMD160 = require('ripemd160')
 
 import {
   parseZoneFile
@@ -117,6 +118,13 @@ function sumUTXOs(utxos: Array<UTXO>) {
   return utxos.reduce((agg, x) => agg + x.value, 0);
 }
 
+/*
+ * Hash160 function for zone files
+ */
+function hash160(buff: Buffer) {
+  const sha256 = bitcoinjs.crypto.sha256(buff)
+  return (new RIPEMD160()).update(sha256).digest()
+}
 
 /*
  * Easier-to-use getNameInfo.  Returns null if the name does not exist.
@@ -396,14 +404,24 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
       network.getNamespaceBurnAddress(namespaceID, false, receiveFeesPeriod),
       paymentBalance,
       estimatePromise,
+      blockstack.safety.namespaceIsReady(namespaceID),
       network.getNamePrice(name),
       network.getAccountBalance(paymentAddress, 'STACKS'),
     ])
-    .then(([nameInfo, blockHeight, isNameValid, isNameAvailable, addressCanReceiveName, 
-            isInGracePeriod, givenNamespaceBurnAddress, trueNamespaceBurnAddress,
-            paymentBalance, estimate,
-            namePrice, STACKSBalance]) => {
-      if (isNameValid &&
+    .then(([nameInfo,
+            blockHeight,
+            isNameValid,
+            isNameAvailable,
+            addressCanReceiveName, 
+            isInGracePeriod,
+            givenNamespaceBurnAddress,
+            trueNamespaceBurnAddress,
+            paymentBalance,
+            estimate,
+            isNamespaceReady,
+            namePrice,
+            STACKSBalance]) => {
+      if (isNameValid && namespaceReady &&
           (isNameAvailable || !nameInfo) &&
           addressCanReceiveName && !isInGracePeriod && paymentBalance >= estimate &&
           trueNamespaceBurnAddress === givenNamespaceBurnAddress &&
@@ -424,6 +442,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
           'nameCostUnits': namePrice.units,
           'nameCostAmount': namePrice.amount.toString(),
           'estimateCostBTC': estimate,
+          'isNamespaceReady': isNamespaceReady,
           'namespaceBurnAddress': givenNamespaceBurnAddress,
           'trueNamespaceBurnAddress': trueNamespaceBurnAddress,
         }, true);
@@ -470,6 +489,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
     throw new Error("Recipient ID-address must start with ID-");
   }
   const address = IDaddress.slice(3);
+  const namespaceID = name.split('.').slice(-1)[0];
 
   let zonefilePath = null;
   let zonefileHash = null;
@@ -540,12 +560,20 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
       blockstack.safety.addressCanReceiveName(
         network.coerceAddress(address)),
       blockstack.safety.isInGracePeriod(name),
+      blockstack.safety.namespaceIsReady(namespaceID),
       paymentBalancePromise,
       estimatePromise,
     ])
-    .then(([nameInfo, blockHeight, isNameValid, isNameAvailable, 
-            addressCanReceiveName, isInGracePeriod, paymentBalance, estimateCost]) => {
-      if (isNameValid &&
+    .then(([nameInfo, 
+            blockHeight,
+            isNameValid,
+            isNameAvailable, 
+            addressCanReceiveName,
+            isInGracePeriod,
+            isNamespaceReady,
+            paymentBalance,
+            estimateCost]) => {
+      if (isNameValid && isNamespaceReady &&
          (isNameAvailable || !nameInfo) &&
           addressCanReceiveName && !isInGracePeriod && estimateCost < paymentBalance) {
         return {'status': true};
@@ -558,6 +586,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
           'isNameAvailable': isNameAvailable,
           'addressCanReceiveName': addressCanReceiveName,
           'isInGracePeriod': isInGracePeriod,
+          'isNamespaceReady': isNamespaceReady,
           'paymentBalanceBTC': paymentBalance,
           'estimateCostBTC': estimateCost,
         }, true);
@@ -1388,22 +1417,85 @@ function namespaceReady(network: Object, args: Array<string>) {
 }
 
 /*
+ * Broadcast a transaction and a zone file.
+ * Returns an object that encodes the success/failure of doing so.
+ * If zonefile is None, then only the transaction will be sent.
+ */
+function broadcastTransactionAndZoneFile(network: Object, tx: String, zonefile: ?string = null) {
+  let txid;
+  return Promise.resolve().then(() => {
+    return network.broadcastTransaction(tx);
+  })
+  .then((_txid) => {
+    txid = _txid;
+    if (zonefile) {
+      return network.broadcastZoneFile(zonefile, txid);
+    }
+    else {
+      return { 'status': true };
+    }
+  })
+  .then((resp) => {
+    if (!resp.status) {
+      return {
+        'status': false,
+        'error': 'Failed to broadcast zone file',
+        'txid': txid
+      };
+    }
+    else {
+      return {
+        'status': true,
+        'txid': txid
+      };
+    }
+  })
+  .catch((e) => {
+    return {
+      'status': false,
+      'error': 'Caught exception sending transaction or zone file',
+      'message': e.message,
+      'stacktrace': e.stack
+    }
+  });
+}
+
+
+/*
  * Generate and send a name-import transaction
  * @name (string) the name to import
  * @IDrecipientAddr (string) the recipient of the name
- * @zonefileHash (string) the zone file hash
+ * @gaiaHubURL (string) the URL to the name's gaia hub
  * @importKey (string) the key to pay for the import
+ * @zonefile (string) OPTIONAL: the path to the zone file to use (supercedes gaiaHubUrl)
+ * @zonefileHash (string) OPTIONAL: the hash of the zone file (supercedes gaiaHubUrl and zonefile)
  */
 function nameImport(network: Object, args: Array<string>) {
   const name = args[0];
   const IDrecipientAddr = args[1];
-  const zonefileHash = args[2];
+  const gaiaHubUrl = args[2];
   const importKey = args[3];
+  let zonefilePath = args[4]
+  let zonefileHash = args[5];
+  let zonefile = null;
 
   if (!IDrecipientAddr.startsWith('ID-')) {
     throw new Error("Recipient ID-address must start with ID-");
   }
+
   const recipientAddr = IDrecipientAddr.slice(3);
+
+  if (zonefilePath && !zonefileHash) {
+    zonefile = fs.readFileSync(zonefilePath).toString();
+  }
+
+  else if (!zonefileHash && !zonefilePath) {
+    // make zone file and hash from gaia hub url
+    const mainnetAddress = network.coerceMainnetAddress(recipientAddr);
+    zonefile = blockstack.makeProfileZoneFile(
+      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`);
+    zonefileHash = hash160(Buffer.from(zonefile)).toString('hex');
+  }
 
   const namespaceID = name.split('.').slice(-1);
   const importAddress = getPrivateKeyAddress(network, importKey);
@@ -1422,7 +1514,7 @@ function nameImport(network: Object, args: Array<string>) {
   if (estimateOnly) {
     return estimatePromise;
   }
-  
+ 
   if (!safetyChecks) {
     if (txOnly) {
       return txPromise;
@@ -1430,7 +1522,17 @@ function nameImport(network: Object, args: Array<string>) {
     else {
       return txPromise
         .then((tx) => {
-          return network.broadcastTransaction(tx);
+          return broadcastTransactionAndZoneFile(network, tx, zonefile)
+        })
+        .then((resp) => {
+          if (resp.status && resp.hasOwnProperty('txid')) {
+            // just return txid 
+            return resp.txid;
+          }
+          else {
+            // some error 
+            return JSONStringify(resp, true);
+          }
         });
     }
   }
@@ -1475,12 +1577,20 @@ function nameImport(network: Object, args: Array<string>) {
         return txPromise;
       }
 
-      return txPromise.then((tx) => {
-        return network.broadcastTransaction(tx);
-      })
-      .then((txidHex) => {
-        return txidHex;
-      });
+      return txPromise
+        .then((tx) => {
+          return broadcastTransactionAndZoneFile(network, tx, zonefile)
+        })
+        .then((resp) => {
+          if (resp.status && resp.hasOwnProperty('txid')) {
+            // just return txid 
+            return resp.txid;
+          }
+          else {
+            // some error 
+            return JSONStringify(resp, true);
+          }
+        });
     });
 }
 
