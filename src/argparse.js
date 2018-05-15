@@ -364,16 +364,16 @@ const CLI_ARGS = {
           pattern: NAME_PATTERN,
         },
         {
-          name: 'address',
+          name: 'id_address',
           type: "string",
           realtype: 'id-address',
           pattern: ID_ADDRESS_PATTERN,
         },
         {
-          name: 'zonefile_hash',
+          name: 'gaia_hub',
           type: "string",
-          realtype: 'zonefile_hash',
-          pattern: ZONEFILE_HASH_PATTERN,
+          realtype: 'url',
+          pattern: '.+',
         },
         {
           name: 'reveal_key',
@@ -381,13 +381,30 @@ const CLI_ARGS = {
           realtype: 'private_key',
           pattern: PRIVATE_KEY_PATTERN,
         },
+        {
+          name: 'zonefile',
+          type: 'string',
+          realtype: 'path',
+          pattern: '.+',
+        },
+        {
+          name: 'zonefile_hash',
+          type: 'string',
+          realtype: 'zonefile_hash',
+          pattern: ZONEFILE_HASH_PATTERN,
+        },
       ],
       minItems: 4,
-      maxItems: 4,
+      maxItems: 6,
       help: 'Import a name into a namespace you revealed.  The REVEAL_KEY must be the same as ' +
       'the key that revealed the namespace.  You can only import a name into a namespace if ' +
       'the namespace has not yet been launched (i.e. via `namespace_ready`), and if the ' +
-      'namespace was revealed less than a year ago.',
+      'namespace was revealed less than a year ago.\n' +
+      '\n' +
+      'The "GAIA_HUB" argument is a URL to a Gaia hub, such as https://gaia.blockstack.org. ' +
+      'If you specify an argument for "ZONEFILE," then this argument is ignored in favor of ' +
+      'the zone file.  Similarly, if you specify an argument for "ZONEFILE_HASH," then it is ' +
+      'used in favor of both "ZONEFILE" and "GAIA_URL."',
       group: 'Namespace Operations',
     },
     namespace_preorder: {
@@ -1070,7 +1087,7 @@ Options can be:
  * Format help
  */
 function formatHelpString(indent: number, limit: number, helpString: string) : string {
-  const lines = helpString.split(' \n' ).filter((line) => line.length > 0);
+  const lines = helpString.split('\n');
   let buf = "";
   let pad = "";
   for (let i = 0; i < indent; i++) {
@@ -1079,9 +1096,15 @@ function formatHelpString(indent: number, limit: number, helpString: string) : s
 
   for (let i = 0; i < lines.length; i++) {
     let linebuf = pad.slice();
-    const words = lines[i].split(' ').filter((word) => word.length > 0);
+    const words = lines[i].split(/ /).filter((word) => word.length > 0);
 
     for (let j = 0; j < words.length; j++) {
+      if (words[j].length === 0) {
+        // explicit line break 
+        linebuf += '\n';
+        break;
+      }
+
       if (linebuf.split('\n').slice(-1)[0].length + 1 + words[j].length > limit) {
         linebuf += '\n';
         linebuf += pad;
