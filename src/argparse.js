@@ -354,6 +354,39 @@ const CLI_ARGS = {
       'backup phrase.  If no backup phrase is given, a new one will be generated.',
       group: 'Key Management',
     },
+    make_zonefile: {
+      type: "array",
+      items: [
+        {
+          name: 'blockstack_id',
+          type: 'string',
+          realtype: 'blockstack_id',
+          pattern: `^${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+        {
+          name: 'id_address',
+          type: 'string',
+          realtype: 'ID-address',
+          pattern: ID_ADDRESS_PATTERN,
+        },
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: '.+',
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: "Generate a zone file for a Blockstack ID with the given profile URL.  If you know " +
+      "the ID-address for the Blockstack ID, the profile URL usually takes the form of:\n" + 
+      "\n" +
+      "     https://{GAIA_HUB_HOST}/hub/{ADDRESS}/profile.json\n" +
+      "\n" +
+      "where {GAIA_HUB_HOST} is the hostname of your Gaia hub (e.g. gaia.blockstack.org) and " +
+      "{ADDRESS} is the base58check part of your ID-address (i.e. the string following 'ID-').",
+      group: "Peer Services",
+    },
     name_import: {
       type: "array",
       items: [
