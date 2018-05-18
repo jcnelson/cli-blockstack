@@ -135,6 +135,23 @@ function hash160(buff: Buffer) {
 }
 
 /*
+ * Normalize a URL--remove duplicate /'s from the root of the path.
+ * Throw an exception if it's not well-formed.
+ */
+function checkUrl(url: string) : string {
+  let urlinfo = URL.parse(url);
+  if (!urlinfo.protocol) {
+    throw new Error(`Malformed full URL: missing scheme in ${url}`);
+  }
+ 
+  if (!urlinfo.path || urlinfo.path.startsWith('//')) {
+    throw new Error(`Malformed full URL: path root has multiple /'s: ${url}`);
+  }
+
+  return url;
+}
+
+/*
  * Easier-to-use getNameInfo.  Returns null if the name does not exist.
  */
 function getNameInfo(network: Object, name: string) : Promise<*> {
@@ -632,6 +649,39 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
         return txidHex;
       });
     });
+}
+
+/*
+ * Generate a zone file for a name, given its Gaia hub URL 
+ */
+function makeZonefile(network: Object, args: Array<string>) {
+  const name = args[0];
+  const idAddress = args[1];
+  const gaiaHub = args[2];
+
+  if (!idAddress.startsWith('ID-')) {
+    throw new Error("ID-address must start with ID-");
+  }
+
+  const address = idAddress.slice(3);
+  const mainnetAddress = network.coerceMainnetAddress(address);
+  const profileUrl = `${gaiaHub}/hub/${mainnetAddress}/profile.json`;
+  try {
+    checkUrl(profileUrl);
+  }
+  catch(e) {
+    return Promise.resolve().then(() => JSONStringify({
+      'status': false,
+      'error': e.message,
+      'hints': [
+        'Make sure the Gaia hub URL does not have any trailing /\'s',
+        'Make sure the Gaia hub URL scheme is present and well-formed',
+      ],
+    }, true));
+  }
+
+  const zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
+  return Promise.resolve().then(() => zonefile)
 }
 
 /*
@@ -1514,8 +1564,22 @@ function nameImport(network: Object, args: Array<string>) {
   else if (!zonefileHash && !zonefilePath) {
     // make zone file and hash from gaia hub url
     const mainnetAddress = network.coerceMainnetAddress(recipientAddr);
-    zonefile = blockstack.makeProfileZoneFile(
-      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`);
+    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    try {
+      checkUrl(profileUrl);
+    }
+    catch(e) {
+      return Promise.resolve().then(() => JSONStringify({
+        'status': false,
+        'error': e.message,
+        'hints': [
+          'Make sure the Gaia hub URL does not have any trailing /\'s',
+          'Make sure the Gaia hub URL scheme is present and well-formed',
+        ],
+      }, true));
+    }
+
+    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
     zonefileHash = hash160(Buffer.from(zonefile)).toString('hex');
   }
 
@@ -1721,8 +1785,22 @@ function register(network: Object, args: Array<string>) {
   }
   else {
     // generate one 
-    zonefile = blockstack.makeProfileZoneFile(
-      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`)
+    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    try {
+      checkUrl(profileUrl);
+    }
+    catch(e) {
+      return Promise.resolve().then(() => JSONStringify({
+        'status': false,
+        'error': e.message,
+        'hints': [
+          'Make sure the Gaia hub URL does not have any trailing /\'s',
+          'Make sure the Gaia hub URL scheme is present and well-formed',
+        ],
+      }));
+    }
+
+    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
   }
 
   let preorderTx = "";
@@ -1856,8 +1934,22 @@ function registerSubdomain(network: Object, args: Array<string>) {
   }
   else {
     // generate one 
-    zonefile = blockstack.makeProfileZoneFile(
-      name, `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`)
+    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    try {
+      checkUrl(profileUrl);
+    }
+    catch(e) {
+      return Promise.resolve().then(() => JSONStringify({
+        'status': false,
+        'error': e.message,
+        'hints': [
+          'Make sure the Gaia hub URL does not have any trailing /\'s',
+          'Make sure the Gaia hub URL scheme is present and well-formed',
+        ],
+      }));
+    }
+
+    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
   }
 
   let broadcastResult = null;
@@ -2599,6 +2691,7 @@ const COMMANDS = {
   'get_zonefile': getNameZonefile,
   'lookup': lookup,
   'make_keychain': makeKeychain,
+  'make_zonefile': makeZonefile,
   'names': names,
   'name_import': nameImport,
   'namespace_preorder': namespacePreorder,
