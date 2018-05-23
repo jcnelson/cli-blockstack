@@ -87,7 +87,11 @@ const CLI_ARGS = {
       help: 'Broadcast a message on the blockchain for subscribers to read.  ' +
       'The MESSAGE_HASH argument must be the hash of a previously-announced zone file.  ' +
       'The OWNER_KEY used to sign the transaction must correspond to the Blockstack ID ' +
-      'to which other users have already subscribed.',
+      'to which other users have already subscribed.\n' + 
+      '\n' +
+      'Example:\n' + 
+      '    $ export OWNER_KEY="136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01"\n' +
+      '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n',
       group: 'Peer Services'
     },
     balance: {
@@ -754,9 +758,81 @@ const CLI_ARGS = {
       ],
       minItems: 4,
       maxItems: 5,
-      help: 'Register a name the easy way.  This will generate and send two transactions, ' +
+      help: 'If you are trying to register a name for a *private key*, use this command.\n' +
+      '\n' +
+      'Register a name the "easy" way to a name-owning private key.  This will generate and send two transactions, ' +
       'and generate and replicate a zone file with the given Gaia hub URL (GAIA_HUB).  ' +
-      'You can optionally specify a path to a custom zone file on disk (ZONEFILE).',
+      'In addition, this command generates and signs an empty profile, and uploads it to ' +
+      'the Gaia hub.  You can optionally specify a custom zone file on disk by giving a path ' +
+      'for the ZONEFILE argument.\n' +
+      '\n' +
+      'If this command completes successfully, your name will be ready to use in a couple of ' +
+      'hours.  This command returns two transaction IDs.  Once they both have 7+ confirmations, ' +
+      'your name will be ready.  You can use the "get_confirmations" command to track this.\n' +
+      '\n' +
+      'WARNING: You cannot use the payment private key while the name is being registered.  ' +
+      'If you do so, you could double-spend one of the pending transactions and lose your name.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export OWNER="136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01"\n' +
+      '    $ export PAYMENT="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
+      '    $ blockstack-cli register example.id "$OWNER" "$PAYMENT" https://gaia.blockstack.org',
+      group: 'Blockstack ID Management',
+    },
+    register_addr: {
+      type: "array",
+      items: [
+        {
+          name: 'blockstack_id',
+          type: 'string',
+          realtype: 'blockstack_id',
+          pattern: NAME_PATTERN,
+        },
+        {
+          name: 'id-address',
+          type: 'string',
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
+        },
+        {
+          name: 'payment_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_PATTERN,
+        },
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+        },
+        {
+          name: 'zonefile',
+          type: 'string',
+          realtype: 'path',
+        }
+      ],
+      minItems: 4,
+      maxItems: 4,
+      help: 'If you are trying to register a name for an *ID-address*, use this command.\n' +
+      '\n' +
+      'Register a name the "easy" way to someone\'s ID-address.  This will generate two ' +
+      'transactions, and generate and replicate a zone file with the given Gaia hub URL ' +
+      '(GAIA_HUB).  No profile will be generated.  You can optionally specify a custom ' +
+      'zone file on disk by giving a path to it as the ZONEFILE argument.\n' +
+      '\n' +
+      'If this command completes successfully, your name will be ready to use in a couple of ' +
+      'hours.  This command generates two transaction IDs.  Once they both have 7+ confirmations, ' +
+      'your name will be ready.  You can use the "get_confirmations" command to track this.\n' +
+      '\n' +
+      'WARNING: You cannot use the payment private key while the name is being registered.  ' +
+      'If you do so, you could double-spend one of the pending transactions and lose the name.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export ID_ADDRESS="ID-18e1bqU7B5qUPY3zJgMLxDnexyStTeSnvV"\n' +
+      '    $ export PAYMENT="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
+      '    $ blockstack-cli register_addr example.id "$ID_ADDRESS" "$PAYMENT" https://gaia.blockstack.org',
       group: 'Blockstack ID Management',
     },
     register_subdomain: {
@@ -1064,7 +1140,10 @@ const CLI_ARGS = {
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Push a zone file on disk to the Blockstack peer network.',
+      help: 'Push a zone file on disk to the Blockstack peer network.  The zone file must ' +
+      'correspond to a zone file hash that has already been announced, i.e. via a NAME_UPDATE, ' +
+      'NAME_REGISTRATION, NAME_RENEWAL, or NAME_IMPORT transaction.  This command does *not* ' + 
+      'let you upload arbitrary zone files.',
       group: 'Peer Services',
     },
   },
@@ -1130,6 +1209,16 @@ function formatHelpString(indent: number, limit: number, helpString: string) : s
   for (let i = 0; i < lines.length; i++) {
     let linebuf = pad.slice();
     const words = lines[i].split(/ /).filter((word) => word.length > 0);
+    if (words.length == 0) {
+      buf += '\n';
+      continue;
+    }
+
+    if (words[0] === '$') {
+      // literal line
+      buf += lines[i] + '\n';
+      continue;
+    }
 
     for (let j = 0; j < words.length; j++) {
       if (words[j].length === 0) {
