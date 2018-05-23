@@ -1757,10 +1757,12 @@ function announce(network: Object, args: Array<string>) {
     });
 }
 
+
 /*
  * Register a name the easy way.  Send the preorder
  * and register transactions to the broadcaster, as 
- * well as the zone file.
+ * well as the zone file.  Also create and replicate
+ * the profile to the Gaia hub.
  * @arg name (string) the name to register
  * @arg ownerKey (string) the hex-encoded owner private key
  * @arg paymentKey (string) the hex-encoded payment key to purchase this name
@@ -1890,6 +1892,132 @@ function register(network: Object, args: Array<string>) {
       return JSONStringify({
         'profileUrls': gaiaUrls.dataUrls, 
         'txInfo': broadcastResult
+      });
+    })
+    .catch((e) => {
+      if (e.hasOwnProperty('safetyErrors')) {
+        // safety error; return as JSON 
+        return e.message;
+      }
+      else {
+        throw e;
+      }
+    });
+}
+
+/*
+ * Register a name the easy way to an ID-address.  Send the preorder
+ * and register transactions to the broadcaster, as 
+ * well as the zone file.
+ * @arg name (string) the name to register
+ * @arg ownerKey (string) the hex-encoded owner private key
+ * @arg paymentKey (string) the hex-encoded payment key to purchase this name
+ * @arg gaiaHubUrl (string) the gaia hub URL to use
+ * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
+ *  supercedes gaiaHubUrl
+ */
+function registerAddr(network: Object, args: Array<string>) {
+  const name = args[0];
+  const IDaddress = args[1];
+  const paymentKey = args[2];
+  const gaiaHubUrl = args[3];
+
+  const address = IDaddress.slice(3);
+  const mainnetAddress = network.coerceMainnetAddress(address)
+
+  let zonefile = "";
+  if (args.length > 4) {
+    const zonefilePath = args[4];
+    zonefile = fs.readFileSync(zonefilePath).toString();
+  }
+  else {
+    // generate one 
+    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    try {
+      checkUrl(profileUrl);
+    }
+    catch(e) {
+      return Promise.resolve().then(() => JSONStringify({
+        'status': false,
+        'error': e.message,
+        'hints': [
+          'Make sure the Gaia hub URL does not have any trailing /\'s',
+          'Make sure the Gaia hub URL scheme is present and well-formed',
+        ],
+      }));
+    }
+
+    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
+  }
+
+  let preorderTx = "";
+  let registerTx = "";
+
+  // carry out safety checks for preorder and register 
+  const preorderSafetyCheckPromise = txPreorder(
+    network, [name, `ID-${address}`, paymentKey], true);
+
+  const registerSafetyCheckPromise = txRegister(
+    network, [name, `ID-${address}`, paymentKey, zonefile], true);
+
+  return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
+    .then(([preorderSafetyChecks, registerSafetyChecks]) => {
+      if ((preorderSafetyChecks.hasOwnProperty('status') && !preorderSafetyChecks.status) || 
+          (registerSafetyChecks.hasOwnProperty('status') && !registerSafetyChecks.status)) {
+        // one or both safety checks failed 
+        throw new SafetyError({
+          'status': false,
+          'error': 'Failed to generate one or more transactions',
+          'preorderSafetyChecks': preorderSafetyChecks,
+          'registerSafetyChecks': registerSafetyChecks,
+        });
+      }
+
+      // will have only gotten back the raw tx (which we'll discard anyway,
+      // since we have to use the right UTXOs)
+      return blockstack.transactions.makePreorder(name, address, paymentKey);
+    })
+    .then((rawTx) => {
+      preorderTx = rawTx;
+      return rawTx;
+    })
+    .then((rawTx) => {
+      // make it so that when we generate the NAME_REGISTRATION operation,
+      // we consume the change output from the NAME_PREORDER.
+      network.modifyUTXOSetFrom(rawTx);
+      return rawTx;
+    })
+    .then(() => {
+      // now we can make the NAME_REGISTRATION 
+      return blockstack.transactions.makeRegister(name, address, paymentKey, zonefile);
+    })
+    .then((rawTx) => {
+      registerTx = rawTx;
+      return rawTx;
+    })
+    .then((rawTx) => {
+      // make sure we don't double-spend the NAME_REGISTRATION before it is broadcasted
+      network.modifyUTXOSetFrom(rawTx);
+    })
+    .then(() => {
+      if (txOnly) {
+        return Promise.resolve().then(() => { 
+          const txData = {
+            preorder: preorderTx,
+            register: registerTx,
+            zonefile: zonefile,
+          };
+          return txData;   
+        });
+      }
+      else {
+        return network.broadcastNameRegistration(preorderTx, registerTx, zonefile);
+      }
+    })
+    .then((txResult) => {
+      // succcess! 
+      return JSONStringify({
+        'txInfo': txResult
       });
     })
     .catch((e) => {
@@ -2703,6 +2831,7 @@ const COMMANDS = {
   'profile_store': profileStore,
   'profile_verify': profileVerify,
   'register': register,
+  'register_addr': registerAddr,
   'register_subdomain': registerSubdomain,
   'renew': renew,
   'revoke': revoke,
