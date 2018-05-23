@@ -214,6 +214,8 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     .then(([resp, blockHeight]) => {
       if (resp.status === 404) {
         throw new Error(`No such namespace '${namespace}'`)
+      } else if (resp.status !== 200) {
+        throw new Error(`Bad response status: ${resp.status}`)
       } else {
         return Promise.all([resp.json(), blockHeight])
       }
@@ -265,7 +267,12 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     // TODO: send to blockstack.js 
     const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`
     return fetch(url)
-      .then(resp => resp.json())
+      .then((resp) => {
+        if (resp.status !== 200) {
+          throw new Error(`Bad response status: ${resp.status}`)
+        }
+        return resp.json();
+      })
       .then((nameInfo) => {
         // coerce all addresses
         let fixedAddresses = {}
@@ -291,7 +298,12 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       url += `&end_block=${endHeight}`
     }
     return fetch(url)
-      .then(resp => resp.json())
+      .then((resp) => {
+        if (resp.status !== 200) {
+          throw new Error(`Bad response status: ${resp.status}`)
+        }
+        return resp.json();
+      })
       .then((historyInfo) => {
         // coerce all addresses 
         let fixedHistory = {}
