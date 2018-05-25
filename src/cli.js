@@ -271,6 +271,11 @@ function lookup(network: Object, args: Array<string>) {
 
   return Promise.all([profilePromise, zonefilePromise, nameInfoPromise])
     .then(([profile, zonefile, nameInfo]) => {
+      if (!nameInfo) {
+        return JSONStringify({
+          error: 'Name not found'
+        });
+      }
       if (nameInfo.hasOwnProperty('grace_period') && nameInfo.grace_period) {
         return JSONStringify({
           error: `Name is expired at block ${nameInfo.expire_block} and must be renewed by block ${nameInfo.renewal_deadline}`
@@ -1780,129 +1785,121 @@ function register(network: Object, args: Array<string>) {
   const mainnetAddress = network.coerceMainnetAddress(address)
   const emptyProfile = {type: '@Person', account: []};
 
-  let zonefile = "";
+  let zonefilePromise = null;
+
   if (args.length > 4) {
     const zonefilePath = args[4];
-    zonefile = fs.readFileSync(zonefilePath).toString();
+    zonefilePromise = Promise.resolve().then(() => fs.readFileSync(zonefilePath).toString());
   }
   else {
-    // generate one 
-    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
-    try {
-      checkUrl(profileUrl);
-    }
-    catch(e) {
-      return Promise.resolve().then(() => JSONStringify({
-        'status': false,
-        'error': e.message,
-        'hints': [
-          'Make sure the Gaia hub URL does not have any trailing /\'s',
-          'Make sure the Gaia hub URL scheme is present and well-formed',
-        ],
-      }));
-    }
-
-    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
+    // generate one
+    zonefilePromise = makeZonefileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
   }
 
   let preorderTx = "";
   let registerTx = "";
   let broadcastResult = null;
+  let zonefile = null;
 
-  // carry out safety checks for preorder and register 
-  const preorderSafetyCheckPromise = txPreorder(
-    network, [name, `ID-${address}`, paymentKey], true);
+  return zonefilePromise.then((zf) => {
 
-  const registerSafetyCheckPromise = txRegister(
-    network, [name, `ID-${address}`, paymentKey, zonefile], true);
+    zonefile = zf;
 
-  return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
-    .then(([preorderSafetyChecks, registerSafetyChecks]) => {
-      if ((preorderSafetyChecks.hasOwnProperty('status') && !preorderSafetyChecks.status) || 
-          (registerSafetyChecks.hasOwnProperty('status') && !registerSafetyChecks.status)) {
-        // one or both safety checks failed 
-        throw new SafetyError({
-          'status': false,
-          'error': 'Failed to generate one or more transactions',
-          'preorderSafetyChecks': preorderSafetyChecks,
-          'registerSafetyChecks': registerSafetyChecks,
-        });
-      }
+    // carry out safety checks for preorder and register
+    const preorderSafetyCheckPromise = txPreorder(
+      network, [name, `ID-${address}`, paymentKey], true);
 
-      // will have only gotten back the raw tx (which we'll discard anyway,
-      // since we have to use the right UTXOs)
-      return blockstack.transactions.makePreorder(name, address, paymentKey);
-    })
-    .then((rawTx) => {
-      preorderTx = rawTx;
-      return rawTx;
-    })
-    .then((rawTx) => {
-      // make it so that when we generate the NAME_REGISTRATION operation,
-      // we consume the change output from the NAME_PREORDER.
-      network.modifyUTXOSetFrom(rawTx);
-      return rawTx;
-    })
-    .then(() => {
-      // now we can make the NAME_REGISTRATION 
-      return blockstack.transactions.makeRegister(name, address, paymentKey, zonefile);
-    })
-    .then((rawTx) => {
-      registerTx = rawTx;
-      return rawTx;
-    })
-    .then((rawTx) => {
-      // make sure we don't double-spend the NAME_REGISTRATION before it is broadcasted
-      network.modifyUTXOSetFrom(rawTx);
-    })
-    .then(() => {
-      if (txOnly) {
-        return Promise.resolve().then(() => { 
-          const txData = {
-            preorder: preorderTx,
-            register: registerTx,
-            zonefile: zonefile,
-          };
-          return txData;   
-        });
-      }
-      else {
-        return network.broadcastNameRegistration(preorderTx, registerTx, zonefile);
-      }
-    })
-    .then((txResult) => {
-      // sign and upload profile
-      broadcastResult = txResult;
+    const registerSafetyCheckPromise = txRegister(
+      network, [name, `ID-${address}`, paymentKey, zf], true);
 
-      const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
-      const wrappedToken = blockstack.wrapProfileToken(signedToken);
-      const tokenRecords = [wrappedToken];
-      const signedProfileData = JSONStringify(tokenRecords);
-
-      return gaiaUploadAll(
-        network, zonefile, 'profile.json', signedProfileData, ownerKey);
-    })
-    .then((gaiaUrls) => {
-      if (gaiaUrls.hasOwnProperty('error')) {
-        return JSONStringify({
-          'profileUrls': gaiaUrls,
-          'txInfo': broadcastResult
-        }, true);
-      }
-      return JSONStringify({
-        'profileUrls': gaiaUrls.dataUrls, 
-        'txInfo': broadcastResult
+    return Promise.all([preorderSafetyCheckPromise, registerSafetyCheckPromise])
+  })
+  .then(([preorderSafetyChecks, registerSafetyChecks]) => {
+    if ((preorderSafetyChecks.hasOwnProperty('status') && !preorderSafetyChecks.status) || 
+        (registerSafetyChecks.hasOwnProperty('status') && !registerSafetyChecks.status)) {
+      // one or both safety checks failed 
+      throw new SafetyError({
+        'status': false,
+        'error': 'Failed to generate one or more transactions',
+        'preorderSafetyChecks': preorderSafetyChecks,
+        'registerSafetyChecks': registerSafetyChecks,
       });
-    })
-    .catch((e) => {
-      if (e.hasOwnProperty('safetyErrors')) {
-        // safety error; return as JSON 
-        return e.message;
-      }
-      else {
-        throw e;
-      }
+    }
+
+    // will have only gotten back the raw tx (which we'll discard anyway,
+    // since we have to use the right UTXOs)
+    return blockstack.transactions.makePreorder(name, address, paymentKey);
+  })
+  .then((rawTx) => {
+    preorderTx = rawTx;
+    return rawTx;
+  })
+  .then((rawTx) => {
+    // make it so that when we generate the NAME_REGISTRATION operation,
+    // we consume the change output from the NAME_PREORDER.
+    network.modifyUTXOSetFrom(rawTx);
+    return rawTx;
+  })
+  .then(() => {
+    // now we can make the NAME_REGISTRATION 
+    return blockstack.transactions.makeRegister(name, address, paymentKey, zonefile);
+  })
+  .then((rawTx) => {
+    registerTx = rawTx;
+    return rawTx;
+  })
+  .then((rawTx) => {
+    // make sure we don't double-spend the NAME_REGISTRATION before it is broadcasted
+    network.modifyUTXOSetFrom(rawTx);
+  })
+  .then(() => {
+    if (txOnly) {
+      return Promise.resolve().then(() => { 
+        const txData = {
+          preorder: preorderTx,
+          register: registerTx,
+          zonefile: zonefile,
+        };
+        return txData;   
+      });
+    }
+    else {
+      return network.broadcastNameRegistration(preorderTx, registerTx, zonefile);
+    }
+  })
+  .then((txResult) => {
+    // sign and upload profile
+    broadcastResult = txResult;
+
+    const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
+    const wrappedToken = blockstack.wrapProfileToken(signedToken);
+    const tokenRecords = [wrappedToken];
+    const signedProfileData = JSONStringify(tokenRecords);
+
+    return gaiaUploadAll(
+      network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
+  })
+  .then((gaiaUrls) => {
+    if (gaiaUrls.hasOwnProperty('error')) {
+      return JSONStringify({
+        'profileUrls': gaiaUrls,
+        'txInfo': broadcastResult
+      }, true);
+    }
+    return JSONStringify({
+      'profileUrls': gaiaUrls.dataUrls, 
+      'txInfo': broadcastResult
     });
+  })
+  .catch((e) => {
+    if (e.hasOwnProperty('safetyErrors')) {
+      // safety error; return as JSON 
+      return e.message;
+    }
+    else {
+      throw e;
+    }
+  });
 }
 
 /*
@@ -2054,57 +2051,25 @@ function registerSubdomain(network: Object, args: Array<string>) {
   const onChainName = name.split('.').slice(-2).join('.');
   const subName = name.split('.')[0];
 
-  let zonefile = "";
+  let zonefilePromise = null;
+
+  // TODO: fix this once the subdomain registrar will tell us the on-chain name
+  console.log(`WARNING: not yet able to verify that ${registrarUrl} is the registrar ` +
+              `for ${onChainName}; assuming that it is...`);
 
   if (args.length > 4) {
     const zonefilePath = args[4];
-    zonefile = fs.readFileSync(zonefilePath).toString();
+    zonefilePromise = Promise.resolve().then(() => fs.readFileSync(zonefilePath).toString());
   }
   else {
     // generate one 
-    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
-    try {
-      checkUrl(profileUrl);
-    }
-    catch(e) {
-      return Promise.resolve().then(() => JSONStringify({
-        'status': false,
-        'error': e.message,
-        'hints': [
-          'Make sure the Gaia hub URL does not have any trailing /\'s',
-          'Make sure the Gaia hub URL scheme is present and well-formed',
-        ],
-      }));
-    }
-
-    zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
+    zonefilePromise = makeZonefileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
   }
 
   let broadcastResult = null;
   let api_key = process.env.API_KEY || null;
-  
-  const request = {
-    'zonefile': zonefile,
-    'name': subName,
-    'owner_address': mainnetAddress
-  };
-
-  let options = {
-    method: 'POST',
-    headers: {
-      'Content-type': 'application/json',
-      'Authorization': ''
-    },
-    body: JSON.stringify(request)
-  };
-
-  if (!!api_key) {
-    options.headers.Authorization = `bearer ${api_key}`;
-  }
 
   const onChainNamePromise = getNameInfo(network, onChainName);
-  const registrarInfoPromise = fetch(`${registrarUrl}/index`)
-    .then(resp => resp.json())
 
   const profileUploadPromise = Promise.resolve().then(() => {
       // sign and upload profile
@@ -2114,7 +2079,7 @@ function registerSubdomain(network: Object, args: Array<string>) {
       const signedProfileData = JSONStringify(tokenRecords);
 
       return gaiaUploadAll(
-        network, zonefile, 'profile.json', signedProfileData, ownerKey);
+        network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
     })
     .then((gaiaUrls) => {
       if (gaiaUrls.hasOwnProperty('error')) {
@@ -2127,42 +2092,56 @@ function registerSubdomain(network: Object, args: Array<string>) {
       }
     });
 
-  if (!safetyChecks) {
-    const registerPromise = fetch(`${registrarUrl}/register`, options)
-      .then(resp => resp.json())
-
-    return Promise.all([registerPromise, profileUploadPromise])
-      .then(([registerInfo, profileUploadInfo]) => {
-        return JSONStringify({
-          'txInfo': registerInfo,
-          'profileUrls': profileUploadInfo.profileUrls,
-        });
+  let safetyChecksPromise = null;
+  if (safetyChecks) {
+    safetyChecksPromise = Promise.all([
+        onChainNamePromise,
+        blockstack.safety.isNameAvailable(name),
+      ])
+      .then(([onChainNameInfo, isNameAvailable]) => {
+        if (safetyChecks) {
+          if (!onChainNameInfo || !isNameAvailable) { 
+            return {
+              'status': false,
+              'error': 'Subdomain cannot be safely registered',
+              'onChainNameInfo': onChainNameInfo,
+              'isNameAvailable': isNameAvailable,
+              'onChainName': onChainName
+            };
+          }
+        }
+        return { 'status': true }
       });
   }
-
-  const safetyChecksPromise = Promise.all([
-      onChainNamePromise,
-      blockstack.safety.isNameAvailable(name),
-      registrarInfoPromise
-    ])
-    .then(([onChainNameInfo, isNameAvailable, registrarInfo]) => {
-      if (safetyChecks) {
-        if (!onChainNameInfo || !isNameAvailable || 
-            registrarInfo.domainName !== onChainName) {
-          return {
-            'status': false,
-            'error': 'Subdomain cannot be safely registered',
-            'onChainNameInfo': onChainNameInfo,
-            'isNameAvailable': isNameAvailable,
-            'registrarDomainName': registrarInfo.domainName,
-          };
-        }
-      }
-      return { 'status': true }
+  else {
+    safetyChecksPromise = Promise.resolve().then(() => {
+      return {
+        'status': true
+      };
     });
+  }
 
-  return safetyChecksPromise.then((safetyChecks) => {
+  return Promise.all([safetyChecksPromise, zonefilePromise])
+  .then(([safetyChecks, zonefile]) => {
     if (safetyChecks.status) {
+      const request = {
+        'zonefile': zonefile,
+        'name': subName,
+        'owner_address': mainnetAddress
+      };
+
+      let options = {
+        method: 'POST',
+        headers: {
+          'Content-type': 'application/json',
+          'Authorization': ''
+        },
+        body: JSON.stringify(request)
+      };
+
+      if (!!api_key) {
+        options.headers.Authorization = `bearer ${api_key}`;
+      }
 
       const registerPromise = fetch(`${registrarUrl}/register`, options)
         .then(resp => resp.json())
@@ -2253,9 +2232,6 @@ function gaiaUpload(network: Object,
       if (hubConfig.address !== ownerAddressMainnet) {
         throw new Error(`Invalid private key: ${hubConfig.address} != ${ownerAddressMainnet}`);
       }
-      if (!hubConfig.url_prefix.startsWith(gaiaHubURL)) {
-        throw new Error(`Invalid Gaia hub URL: must match ${hubConfig.url_prefix}`);
-      }
       return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
     });
 }
@@ -2263,51 +2239,89 @@ function gaiaUpload(network: Object,
 /*
  * Upload data to all Gaia hubs, given a zone file
  * @network (object) the network to use
- * @nameZonefile (string) the name's zone file
+ * @gaiaUrls (array) list of Gaia URLs
  * @gaiaPath (string) the path to the file to store in Gaia
  * @gaiaData (string) the data to store
  * @privateKey (string) the hex-encoded private key
  * @return a promise with {'dataUrls': [urls to the data]}, or {'error': ...}
  */
-function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string, 
+function gaiaUploadAll(network: Object, gaiaUrls: Array<string>, gaiaPath: string, 
   gaiaData: string, privateKey: string) : Promise<*> {
-  
-  let zonefile = null;
-  try {
-    zonefile = parseZoneFile(nameZonefile);
-  } catch (error) {
-    return Promise.resolve().then(() => {
-      return {'error': 'Failed to parse zone file' }
-    });
-  }
 
-  const gaiaProfileUrls = zonefile.uri.map((uriRec) => uriRec.target);
-  const gaiaUrls = gaiaProfileUrls.map((gaiaProfileUrl) => {
-    const urlInfo = URL.parse(gaiaProfileUrl);
+  const sanitizedGaiaUrls = gaiaUrls.map((gaiaUrl) => {
+    const urlInfo = URL.parse(gaiaUrl);
     if (!urlInfo.protocol) {
-      return null;
+      return '';
     }
     if (!urlInfo.host) {
-      return null;
-    }
-    if (!urlInfo.path) {
-      return null;
-    }
-    if (!urlInfo.path.endsWith('profile.json')) {
-      return null;
+      return '';
     }
     // keep flow happy
     return `${String(urlInfo.protocol)}//${String(urlInfo.host)}`;
   })
-  .filter((gaiaUrl) => !!gaiaUrl);
+  .filter((gaiaUrl) => gaiaUrl.length > 0);
 
-  const uploadPromises = gaiaUrls.map((gaiaUrl) => 
-    gaiaUpload(network, gaiaUrl, 'profile.json', gaiaData, privateKey));
+  const uploadPromises = sanitizedGaiaUrls.map((gaiaUrl) => 
+    gaiaUpload(network, gaiaUrl, gaiaPath, gaiaData, privateKey));
 
   return Promise.all(uploadPromises)
     .then((publicUrls) => {
       return { 'dataUrls': publicUrls };
     });
+}
+
+/*
+ * Make a zone file from a Gaia hub---reach out to the Gaia hub, get its read URL prefix,
+ * and generate a zone file with the profile mapped to the Gaia hub.
+ *
+ * @network (object) the network connection
+ * @name (string) the name that owns the zone file
+ * @gaiaHubUrl (string) the URL to the gaia hub write endpoint
+ * @ownerKey (string) the owner private key
+ *
+ * Returns a promise that resolves to the zone file with the profile URL
+ */
+function makeZonefileFromGaiaUrl(network: Object, name: string, 
+  gaiaHubUrl: string, ownerKey: string) {
+
+  const address = getPrivateKeyAddress(network, ownerKey);
+  const mainnetAddress = network.coerceMainnetAddress(address)
+
+  const zonefilePromise = Promise.resolve().then(() => {
+    return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(ownerKey));
+  })
+  .then((hubConfig) => {
+    if (hubConfig.address !== mainnetAddress) {
+      throw new Error(`Invalid private key: ${hubConfig.address} != ${mainnetAddress}`);
+    }
+    if (!hubConfig.url_prefix) {
+      throw new Error('Invalid hub config: no read_url_prefix defined');
+    }
+    return hubConfig.url_prefix;
+  })
+  .then((gaiaReadUrl) => {
+    gaiaReadUrl = gaiaReadUrl.replace(/\/+$/, "");
+    const profileUrl = `${gaiaReadUrl}/${mainnetAddress}/profile.json`;
+    try {
+      checkUrl(profileUrl);
+      return profileUrl;
+    }
+    catch(e) {
+      throw new SafetyError({
+        'status': false,
+        'error': e.message,
+        'hints': [
+          'Make sure the Gaia hub read URL scheme is present and well-formed.',
+          `Check the "read_url_prefix" field of ${gaiaHubUrl}/hub_info`
+        ],
+      });
+    }
+  })
+  .then((profileUrl) => {
+    return blockstack.makeProfileZoneFile(name, profileUrl);
+  });
+
+  return zonefilePromise;
 }
 
 /*
@@ -2320,7 +2334,7 @@ function gaiaUploadAll(network: Object, nameZonefile: string, gaiaPath: string,
  * @nameOrAddress (string) name or address that owns the profile
  * @path (string) path to the signed profile token
  * @privateKey (string) owner private key for the name
- * @gaiaUrl (string) OPTINOAL: if name is not given, then this is the Gaia hub URL to use
+ * @gaiaUrl (string) this is the write endpoint of the Gaia hub to use
  */
 function profileStore(network: Object, args: Array<string>) {
   let nameOrAddress = args[0];
@@ -2333,72 +2347,33 @@ function profileStore(network: Object, args: Array<string>) {
   const ownerAddress = getPrivateKeyAddress(network, privateKey);
   let ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress);
 
-  let lookupPromise = null;
+  let nameInfoPromise = null;
 
   if (nameOrAddress.startsWith('ID-')) {
     // ID-address
-    nameOrAddress = nameOrAddress.slice(3);
-  }
-
-  if (nameOrAddress.match(ADDRESS_PATTERN)) {
-    if (!gaiaHubUrl) {
-      printUsage();
-      process.exit(1);
-    }
-
-    // this is an address 
-    if (ownerAddressMainnet !== network.coerceMainnetAddress(nameOrAddress)) {
-      return Promise.resolve().then(() => {
-        return {'error': 'Private key does not match address'};
-      });
-    }
-
-    // fake zone file which can be parsed back into
-    // the address holder's gaia hub URL
-    const fakeZoneFile = {
-      '$origin': 'placeholder.id',
-      '$ttl': 3600,
-      'uri': [
-        {
-          'name': '_http._tcp',
-          'priority': 10,
-          'weight': 1,
-          'target': `${gaiaHubUrl}/hub/${ownerAddressMainnet}/profile.json`
-        }
-      ]
-    }
-
-    const fakeZoneFileTemplate = '{$origin}\n{$ttl}\n{uri}\n'
-    const fakeZoneFileText = ZoneFile.makeZoneFile(fakeZoneFile, fakeZoneFileTemplate);
-
-    // noop 
-    lookupPromise = Promise.resolve().then(() => {
+    nameInfoPromise = Promise.resolve().then(() => {
       return {
-        'address': ownerAddressMainnet,
-        'zonefile': fakeZoneFileText
-      };
+        'address': nameOrAddress.slice(3)
+      }
     });
   }
   else {
-    // this is a name
-    lookupPromise = network.getNameInfo(nameOrAddress);
+    // name; find the address 
+    nameInfoPromise = getNameInfo(network, nameOrAddress);
   }
-
+  
   const verifyProfilePromise = profileVerify(network, 
     [signedProfilePath, `ID-${ownerAddressMainnet}`]);
    
-  return Promise.all([lookupPromise, verifyProfilePromise])
+  return Promise.all([nameInfoPromise, verifyProfilePromise])
     .then(([nameInfo, verifiedProfile]) => {
-      if (safetyChecks && 
-          network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress)) {
-        throw new Error(`Name owner address ${nameInfo.address} does not match ` +
+      if (safetyChecks && (!nameInfo ||
+          network.coerceAddress(nameInfo.address) !== network.coerceAddress(ownerAddress))) {
+        throw new Error(`Name owner address either could not be found, or does not match ` +
           `private key address ${ownerAddress}`);
       }
-      if (!nameInfo.zonefile) {
-        throw new Error(`Could not load zone file for '${nameOrAddress}'`)
-      }
       return gaiaUploadAll(
-        network, nameInfo.zonefile, 'profile.json', signedProfileData, privateKey);
+        network, [gaiaHubUrl], 'profile.json', signedProfileData, privateKey);
     })
     .then((gaiaUrls) => {
       if (gaiaUrls.hasOwnProperty('error')) {
