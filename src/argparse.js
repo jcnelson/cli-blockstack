@@ -374,7 +374,7 @@ const CLI_ARGS = {
           pattern: ID_ADDRESS_PATTERN,
         },
         {
-          name: 'gaia_hub',
+          name: 'gaia_url_prefix',
           type: 'string',
           realtype: 'url',
           pattern: '.+',
@@ -385,9 +385,9 @@ const CLI_ARGS = {
       help: "Generate a zone file for a Blockstack ID with the given profile URL.  If you know " +
       "the ID-address for the Blockstack ID, the profile URL usually takes the form of:\n" + 
       "\n" +
-      "     https://{GAIA_HUB_HOST}/hub/{ADDRESS}/profile.json\n" +
+      "     https://{GAIA_URL_PREFIX}/hub/{ADDRESS}/profile.json\n" +
       "\n" +
-      "where {GAIA_HUB_HOST} is the hostname of your Gaia hub (e.g. gaia.blockstack.org) and " +
+      "where {GAIA_URL_PREFIX} is the *read* endpoint of your Gaia hub (e.g. gaia.blockstack.org) and " +
       "{ADDRESS} is the base58check part of your ID-address (i.e. the string following 'ID-').",
       group: "Peer Services",
     },
@@ -407,7 +407,7 @@ const CLI_ARGS = {
           pattern: ID_ADDRESS_PATTERN,
         },
         {
-          name: 'gaia_hub',
+          name: 'gaia_url_prefix',
           type: "string",
           realtype: 'url',
           pattern: '.+',
@@ -436,12 +436,25 @@ const CLI_ARGS = {
       help: 'Import a name into a namespace you revealed.  The REVEAL_KEY must be the same as ' +
       'the key that revealed the namespace.  You can only import a name into a namespace if ' +
       'the namespace has not yet been launched (i.e. via `namespace_ready`), and if the ' +
-      'namespace was revealed less than a year ago.\n' +
+      'namespace was revealed less than a year ago (52595 blocks ago).\n' +
       '\n' +
-      'The "GAIA_HUB" argument is a URL to a Gaia hub, such as https://gaia.blockstack.org. ' +
-      'If you specify an argument for "ZONEFILE," then this argument is ignored in favor of ' +
-      'the zone file.  Similarly, if you specify an argument for "ZONEFILE_HASH," then it is ' +
-      'used in favor of both "ZONEFILE" and "GAIA_URL."',
+      'A zone file will be generated for this name automatically, if "ZONEFILE" is not given.  By default, ' +
+      'the zone file will have a URL to the name owner\'s profile prefixed by GAIA_URL_PREFIX.  If you ' +
+      'know the *write* endpoint for the name owner\'s Gaia hub, you can find out the GAIA_URL_PREFIX ' +
+      'to use with "curl $GAIA_HUB/hub_info".\n' +
+      '\n' +
+      'If you specify an argument for "ZONEFILE," then the GAIA_URL_PREFIX argument is ignored in favor of ' +
+      'your custom zone file on disk.\n' +
+      '\n' +
+      'If you specify a valid zone file hash for "ZONEFILE_HASH," then it will be used in favor of ' +
+      'both ZONEFILE and GAIA_URL_PREFIX.  The zone file hash will be incorporated directly into the ' +
+      'name-import transaction.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export REVEAL_KEY="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
+      '    $ export ID_ADDRESS="ID-18e1bqU7B5qUPY3zJgMLxDnexyStTeSnvV"\n' +
+      '    $ blockstack-cli name_import example.id "$ID_ADDRESS" https://gaia.blockstack.org "$REVEAL_KEY"',
       group: 'Namespace Operations',
     },
     namespace_preorder: {
@@ -649,12 +662,12 @@ const CLI_ARGS = {
           realtype: 'url',
         }
       ],
-      minItems: 3,
+      minItems: 4,
       maxItems: 4,
       help: 'Store a profile on disk to a Gaia hub.  USER_ID can be either a Blockstack ID or ' +
-      'an ID-address.  If USER_ID is an ID-address, then GAIA_HUB is a required argument.  ' +
-      'If USER_ID is a Blockstack ID, then the GAIA_HUB will be looked from using the Blockstack ID\'s ' +
-      'zonefile.',
+      'an ID-address.  The GAIA_HUB argument must be the *write* endpoint for the user\'s Gaia hub ' +
+      '(e.g. https://hub.blockstack.org).  You can verify this by ensuring that you can run \'curl ' +
+      '"$GAIA_HUB/hub_info"\' successfully.',
       group: 'Profiles'
     },
     profile_verify: {
@@ -760,24 +773,33 @@ const CLI_ARGS = {
       maxItems: 5,
       help: 'If you are trying to register a name for a *private key*, use this command.\n' +
       '\n' +
-      'Register a name the "easy" way to a name-owning private key.  This will generate and send two transactions, ' +
+      'Register a name the "easy" way to a name-owning private key.  After successfully running this command, ' +
+      'and after waiting a couple hours, your name will be ready to use and will resolve to a ' + 
+      'signed empty profile hosted on the given Gaia hub (GAIA_HUB).\n' +
+      '\n' +
+      'Behind the scenes, this will generate and send two transactions ' +
       'and generate and replicate a zone file with the given Gaia hub URL (GAIA_HUB).  ' +
-      'In addition, this command generates and signs an empty profile, and uploads it to ' +
-      'the Gaia hub.  You can optionally specify a custom zone file on disk by giving a path ' +
-      'for the ZONEFILE argument.\n' +
+      'Note that the GAIA_HUB argument must correspond to the *write* endpoint of the Gaia hub ' +
+      '(i.e. you should be able to run \'curl "$GAIA_HUB/hub_info"\' and get back data).  If you ' +
+      'are using Blockstack PBC\'s default Gaia hub, pass "https://hub.blockstack.org" for this ' +
+      'argument.\n' +
       '\n' +
-      'If this command completes successfully, your name will be ready to use in a couple of ' +
-      'hours.  This command returns two transaction IDs.  Once they both have 7+ confirmations, ' +
-      'your name will be ready.  You can use the "get_confirmations" command to track this.\n' +
+      'By default, this command generates a zone file automatically that points to the Gaia hub\'s ' +
+      'read endpoint (which is queried on-the-fly from GAIA_HUB).  If you instead want to have a custom zone file for this name, ' +
+      'you can specify a path to it on disk with the ZONEFILE argument.\n' +
       '\n' +
-      'WARNING: You cannot use the payment private key while the name is being registered.  ' +
+      'If this command completes successfully, your name will be ready to use once both transactions have 7+ confirmations.  ' +
+      'You can use the "get_confirmations" command to track the confirmations ' +
+      'on the transaction IDs returned by this command.\n' +
+      '\n' +
+      'WARNING: You should *NOT* use the payment private key (PAYMENT_KEY) while the name is being confirmed.  ' +
       'If you do so, you could double-spend one of the pending transactions and lose your name.\n' +
       '\n' +
       'Example:\n' +
       '\n' +
       '    $ export OWNER="136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01"\n' +
       '    $ export PAYMENT="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
-      '    $ blockstack-cli register example.id "$OWNER" "$PAYMENT" https://gaia.blockstack.org',
+      '    $ blockstack-cli register example.id "$OWNER" "$PAYMENT" https://hub.blockstack.org',
       group: 'Blockstack ID Management',
     },
     register_addr: {
@@ -802,7 +824,7 @@ const CLI_ARGS = {
           pattern: PRIVATE_KEY_PATTERN,
         },
         {
-          name: 'gaia_hub',
+          name: 'gaia_url_prefix',
           type: 'string',
           realtype: 'url',
         },
@@ -816,16 +838,30 @@ const CLI_ARGS = {
       maxItems: 4,
       help: 'If you are trying to register a name for an *ID-address*, use this command.\n' +
       '\n' +
-      'Register a name the "easy" way to someone\'s ID-address.  This will generate two ' +
-      'transactions, and generate and replicate a zone file with the given Gaia hub URL ' +
-      '(GAIA_HUB).  No profile will be generated.  You can optionally specify a custom ' +
-      'zone file on disk by giving a path to it as the ZONEFILE argument.\n' +
+      'Register a name the "easy" way to someone\'s ID-address.  After successfully running this ' +
+      'command and waiting a couple of hours, the name will be registered on-chain and have a ' +
+      'zone file with a URL to where the owner\'s profile should be.  This command does NOT ' + 
+      'generate, sign, or replicate a profile for the name---the name owner will need to do this ' +
+      'separately, once the name is registered.\n' +
       '\n' +
-      'If this command completes successfully, your name will be ready to use in a couple of ' +
-      'hours.  This command generates two transaction IDs.  Once they both have 7+ confirmations, ' +
-      'your name will be ready.  You can use the "get_confirmations" command to track this.\n' +
+      'Behind the scenes, this command will generate two ' +
+      'transactions, and generate and replicate a zone file with the given Gaia hub read URL ' +
+      '(GAIA_URL_PREFIX).  Note that the GAIA_URL_PREFIX argument must correspond to the *read* endpoint of the Gaia hub ' +
+      '(e.g. if you are using Blockstack PBC\'s default Gaia hub, this is "https://gaia.blockstack.org"). ' +
+      'If you know the *write* endpoint of the name owner\'s Gaia hub, you can find the right value for ' +
+      'GAIA_URL_PREFIX by running "curl $GAIA_HUB/hub_info".\n' +
       '\n' +
-      'WARNING: You cannot use the payment private key while the name is being registered.  ' +
+      'No profile will be generated or uploaded by this command.  Instead, this command generates ' +
+      'a zone file that will include the URL to a profile based on the GAIA_URL_PREFIX argument.\n' +
+      '\n' +
+      'The zone file will be generated automatically from the GAIA_URL_PREFIX argument.  If you need ' +
+      'to use a custom zone file, you can pass the path to it on disk via the ZONEFILE argument.\n' +
+      '\n' +
+      'If this command completes successfully, the name will be ready to use in a couple of ' +
+      'hours---that is, once both transactions have 7+ confirmations. ' +
+      'You can use the "get_confirmations" command to track the confirmations.\n' +
+      '\n' +
+      'WARNING: You should *NOT* use the payment private key (PAYMENT_KEY) while the name is being confirmed.  ' +
       'If you do so, you could double-spend one of the pending transactions and lose the name.\n' +
       '\n' +
       'Example:\n' +
@@ -869,7 +905,21 @@ const CLI_ARGS = {
       minItems: 4,
       maxItems: 5,
       help: 'Register a subdomain.  This will generate and sign a subdomain zone file record ' +
-      'with the given GAIA_HUB URL and send it to the given subdomain registrar (REGISTRAR).',
+      'with the given GAIA_HUB URL and send it to the given subdomain registrar (REGISTRAR).\n' +
+      '\n' +
+      'This command generates, signs, and uploads a profile to the GAIA_HUB url.  Note that the GAIA_HUB ' +
+      'argument must correspond to the *write* endpoint of your Gaia hub (i.e. you should be able ' +
+      'to run \'curl "$GAIA_HUB/hub_info"\' successfully).  If you are using Blockstack PBC\'s default ' +
+      'Gaia hub, this argument should be "https://hub.blockstack.org".\n' +
+      '\n' +
+      'WARNING: At this time, no validation will occur on the registrar URL.  Be sure that the URL ' +
+      'corresponds to the registrar for the on-chain name before running this command!\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export OWNER="6e50431b955fe73f079469b24f06480aee44e4519282686433195b3c4b5336ef01"\n' +
+      '    $ # NOTE: https://registrar.blockstack.org is the registrar for personal.id!\n' + 
+      '    $ blockstack-cli register_subdomain hello.personal.id "$OWNER" https://hub.blockstack.org https://registrar.blockstack.org\n',
       group: 'Blockstack ID Management',
     },
     revoke: {
