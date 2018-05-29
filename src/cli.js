@@ -301,6 +301,14 @@ function getNameBlockchainRecord(network: Object, args: Array<string>) {
   })
   .then((nameInfo) => {
     return JSONStringify(nameInfo);
+  })
+  .catch((e) => {
+    if (e.message === 'Bad response status: 404') {
+      return JSONStringify({ 'error': 'Name not found'}, true);
+    }
+    else {
+      throw e;
+    }
   });
 }
 
@@ -2070,6 +2078,8 @@ function registerSubdomain(network: Object, args: Array<string>) {
   let api_key = process.env.API_KEY || null;
 
   const onChainNamePromise = getNameInfo(network, onChainName);
+  const registrarStatusPromise = fetch(`${registrarUrl}/index`)
+    .then((resp) => resp.json());
 
   const profileUploadPromise = Promise.resolve().then(() => {
       // sign and upload profile
@@ -2097,16 +2107,24 @@ function registerSubdomain(network: Object, args: Array<string>) {
     safetyChecksPromise = Promise.all([
         onChainNamePromise,
         blockstack.safety.isNameAvailable(name),
+        registrarStatusPromise
       ])
-      .then(([onChainNameInfo, isNameAvailable]) => {
+      .then(([onChainNameInfo, isNameAvailable, registrarStatus]) => {
         if (safetyChecks) {
-          if (!onChainNameInfo || !isNameAvailable) { 
+          const registrarName =
+            (!!registrarStatus && registrarStatus.hasOwnProperty('domainName')) ?
+            registrarStatus.domainName :
+            '<unknown>';
+
+          if (!onChainNameInfo || !isNameAvailable || 
+              (registrarName !== '<unknown>' && registrarName !== onChainName)) {
             return {
               'status': false,
               'error': 'Subdomain cannot be safely registered',
               'onChainNameInfo': onChainNameInfo,
               'isNameAvailable': isNameAvailable,
-              'onChainName': onChainName
+              'onChainName': onChainName,
+              'registrarName': registrarName
             };
           }
         }
