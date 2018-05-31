@@ -1473,7 +1473,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'eitUxC:F:B:P:D:G:N:H:T:') : Object {
+                           opts: string = 'eitUxC:F:B:P:D:G:N:H:T:I:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);
