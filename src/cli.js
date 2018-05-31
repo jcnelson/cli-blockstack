@@ -2871,7 +2871,8 @@ export function CLIMain() {
     const integration_test = opts['i'];
     const testnet = opts['t'];
     const apiUrl = opts['H'];
-    const transactionBroadcasterUrl = opts['T']
+    const transactionBroadcasterUrl = opts['T'];
+    const nodeAPIUrl = opts['I'];
 
     if (integration_test) {
       BLOCKSTACK_TEST = integration_test
@@ -2895,7 +2896,8 @@ export function CLIMain() {
         getNetwork(configData, (!!BLOCKSTACK_TEST || !!integration_test || !!testnet)),
         consensusHash, feeRate, namespaceBurnAddr,
         priceToPay, priceUnits, receiveFeesPeriod, gracePeriod, 
-        apiUrl, transactionBroadcasterUrl);
+        apiUrl, transactionBroadcasterUrl,
+        nodeAPIUrl ? nodeAPIUrl : configData.blockstackNodeUrl);
 
     blockstack.config.network = blockstackNetwork;
 
