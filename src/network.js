@@ -27,7 +27,8 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
               feeRate: number | null, namespaceBurnAddress: string | null,
               priceToPay: number | null, priceUnits: string | null, 
               receiveFeesPeriod: number | null, gracePeriod: number | null,
-              altAPIUrl: string | null, altTransactionBroadcasterUrl: string | null) {
+              altAPIUrl: string | null, altTransactionBroadcasterUrl: string | null,
+              nodeAPIUrl: string | null) {
 
     const apiUrl = altAPIUrl ? altAPIUrl : network.blockstackAPIUrl;
     const txbUrl = altTransactionBroadcasterUrl ? 
@@ -43,6 +44,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     this.receiveFeesPeriod = receiveFeesPeriod
     this.gracePeriod = gracePeriod
     this.optAlwaysCoerceAddress = false
+    this.nodeAPIUrl = nodeAPIUrl
   }
 
   isMainnet() : boolean {
@@ -263,15 +265,70 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       })
   }
 
+  getBlockchainNameRecordLegacy(name: string) : Promise<*> {
+    // legacy code path.
+    if (!this.nodeAPIUrl) {
+      throw new Error("No indexer URL given.  Pass -I.")
+    }
+
+    // this is EVIL code, and I'm a BAD PERSON for writing it.
+    // will be removed once the /v1/blockchains/${blockchain}/names/${name} endpoint ships.
+    const postData = '<?xml version="1.0"?>' +
+        '<methodCall><methodName>get_name_blockchain_record</methodName>' +
+        '<params><param><string>' +
+        `${name}` +
+        '</string></param></params>' +
+        '</methodCall>'
+
+    // try and guess which node we're talking to 
+    // (reminder: this is EVIL CODE that WILL BE REMOVED as soon as possible)
+    return fetch(`${this.nodeAPIUrl}/RPC2`,
+               { method: 'POST',
+                 body: postData })
+      .then((resp) => {
+        if (resp.status >= 200 && resp.status <= 299){
+          return resp.text();
+        }
+        else {
+          throw new Error(`Bad response code: ${resp.status}`);
+        }
+      })
+      .then((respText) => {
+        // response is a single string
+        const start = respText.indexOf('<string>') + '<string>'.length
+        const stop = respText.indexOf('</string>')
+        const dataResp = respText.slice(start, stop);
+        let dataJson = null;
+        try {
+          dataJson = JSON.parse(dataResp);
+          if (!dataJson.record) {
+            throw new Error('No name record returned (legacy codepath)');
+          }
+          const nameRecord = dataJson.record;
+          if (nameRecord.hasOwnProperty('history')) {
+            // don't return history, since this is not expected in the new API
+            delete nameRecord.history;
+          }
+          return nameRecord;
+        }
+        catch(e) {
+          throw new Error('Invalid JSON returned (legacy codepath)');
+        }
+      });
+  }
+   
+
   getBlockchainNameRecord(name: string) : Promise<*> {
-    // TODO: send to blockstack.js 
+    // TODO: send to blockstack.js, once we can drop the legacy code path 
     const url = `${this.blockstackAPIUrl}/v1/blockchains/bitcoin/names/${name}`
     return fetch(url)
       .then((resp) => {
         if (resp.status !== 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
+          return this.getBlockchainNameRecordLegacy(name);
         }
-        return resp.json();
+        else {
+          return resp.json();
+        }
       })
       .then((nameInfo) => {
         // coerce all addresses
