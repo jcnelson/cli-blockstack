@@ -1236,7 +1236,9 @@ Options can be:
     -G GRACE_PERIOD     Number of blocks in which a name can be renewed after it
                         expires (requires -i)
 
-    -H URL              Use an alternative Blockstack Core node.
+    -H URL              Use an alternative Blockstack Core API endpoint.
+
+    -I URL              Use an alternative Blockstack Core Indexer endpoint.
 
     -N PAY2NS_PERIOD    Number of blocks in which a namespace receives the registration
                         and renewal fees after it is created (requires -i)
