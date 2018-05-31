@@ -39,21 +39,23 @@ export const TXID_PATTERN =
 
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
+  blockstackNodeUrl: 'https://node.blockstack.org:6263',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
   utxoServiceUrl: 'https://blockchain.info'
 };
 
 const CONFIG_REGTEST_DEFAULTS = {
   blockstackAPIUrl: 'http://localhost:16268',
+  blockstackNodeUrl: 'http://localhost:16264',
   broadcastServiceUrl: 'http://localhost:16269',
   utxoServiceUrl: 'http://localhost:18332'
 };
 
 const PUBLIC_TESTNET_HOST = 'testnet.blockstack.org';
-// const PUBLIC_TESTNET_HOST = '127.0.0.1';
 
 const CONFIG_TESTNET_DEFAULTS = {
   blockstackAPIUrl: `http://${PUBLIC_TESTNET_HOST}:16268`,
+  blockstackNodeUrl: `http://${PUBLIC_TESTNET_HOST}:16264`,
   broadcastServiceUrl: `http://${PUBLIC_TESTNET_HOST}:16269`,
   utxoServiceUrl: `http://${PUBLIC_TESTNET_HOST}:18332`
 };
