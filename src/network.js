@@ -302,7 +302,8 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         try {
           dataJson = JSON.parse(dataResp);
           if (!dataJson.record) {
-            throw new Error('No name record returned (legacy codepath)');
+            // error response 
+            return dataJson
           }
           const nameRecord = dataJson.record;
           if (nameRecord.hasOwnProperty('history')) {
