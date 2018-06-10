@@ -2907,9 +2907,24 @@ export function CLIMain() {
     }
 
     const method = COMMANDS[cmdArgs.command];
+    let exitcode = 0;
+
     method(blockstackNetwork, cmdArgs.args)
+    .then((result) => {
+      try {
+        // if this is a JSON object with 'status', set the exit code
+        const resJson = JSON.parse(result);
+        if (resJson.hasOwnProperty('status') && !resJson.status) {
+          exitcode = 1;
+        }
+        return result;
+      }
+      catch(e) {
+        return result;
+      }
+    })
     .then((result) => console.log(result))
-    .then(() => process.exit(0))
+    .then(() => process.exit(exitcode))
     .catch((e) => {
        console.error(e.stack);
        console.error(e.message);
