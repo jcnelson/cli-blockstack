@@ -227,7 +227,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       if (namespaceInfo.version === 2) {
         // pay-to-namespace-creator if this namespace is less than $receiveFeesPeriod blocks old
         if (namespaceInfo.reveal_block + this.receiveFeesPeriod > blockHeight) {
-          console.log(`${namespaceInfo.reveal_block} + ${this.receiveFeesPeriod} >= ${blockHeight}`)
           address = namespaceInfo.address
         }
       }
