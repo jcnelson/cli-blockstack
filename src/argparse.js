@@ -19,8 +19,13 @@ export const ADDRESS_PATTERN = `^(${ADDRESS_CHARS})$`;
 
 export const ID_ADDRESS_PATTERN = `^ID-${ADDRESS_CHARS}$`;
 
+// hex private key
 export const PRIVATE_KEY_PATTERN = 
   '^([0-9a-f]{64,66})$'
+
+// m,pk1,pk2,...,pkn
+export const PRIVATE_KEY_MULTISIG_PATTERN =
+  '^([0-9]+),([0-9a-f]{64,66},)*([0-9a-f]{64,66})$'
 
 export const PUBLIC_KEY_PATTERN = 
   '^([0-9a-f]{66,130})$'
@@ -81,7 +86,7 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: "string",
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 2,
@@ -89,10 +94,14 @@ const CLI_ARGS = {
       help: 'Broadcast a message on the blockchain for subscribers to read.  ' +
       'The MESSAGE_HASH argument must be the hash of a previously-announced zone file.  ' +
       'The OWNER_KEY used to sign the transaction must correspond to the Blockstack ID ' +
-      'to which other users have already subscribed.\n' + 
+      'to which other users have already subscribed.  OWNER_KEY can be a single private key ' +
+      'or a serialized multisig private key bundle.\n' + 
       '\n' +
-      'Example:\n' + 
+      'Examples:\n' + 
       '    $ export OWNER_KEY="136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01"\n' +
+      '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n' +
+      '\n' +
+      '    $ export OWNER_KEY="2,136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01,1885cba486a42960499d1f137ef3a475725ceb11f45d74631f9928280196f67401,2418981c7f3a91d4467a65a518e14fafa30e07e6879c11fab7106ea72b49a7cb01"\n' +
       '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n',
       group: 'Peer Services'
     },
@@ -177,12 +186,12 @@ const CLI_ARGS = {
           name: 'private_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         }
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Get the address of a private key.',
+      help: 'Get the address of a private key or multisig private key bundle.',
       group: 'Key Management',
     },
     get_blockchain_record: {
@@ -478,7 +487,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 3,
@@ -556,7 +565,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 10,
@@ -705,13 +714,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'new_id_address',
@@ -758,7 +767,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'gaia_hub',
@@ -775,7 +784,7 @@ const CLI_ARGS = {
       maxItems: 5,
       help: 'If you are trying to register a name for a *private key*, use this command.\n' +
       '\n' +
-      'Register a name the "easy" way to a name-owning private key.  After successfully running this command, ' +
+      'Register a name to a single name-owning private key.  After successfully running this command, ' +
       'and after waiting a couple hours, your name will be ready to use and will resolve to a ' + 
       'signed empty profile hosted on the given Gaia hub (GAIA_HUB).\n' +
       '\n' +
@@ -823,7 +832,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'gaia_url_prefix',
@@ -840,7 +849,7 @@ const CLI_ARGS = {
       maxItems: 4,
       help: 'If you are trying to register a name for an *ID-address*, use this command.\n' +
       '\n' +
-      'Register a name the "easy" way to someone\'s ID-address.  After successfully running this ' +
+      'Register a name to someone\'s ID-address.  After successfully running this ' +
       'command and waiting a couple of hours, the name will be registered on-chain and have a ' +
       'zone file with a URL to where the owner\'s profile should be.  This command does NOT ' + 
       'generate, sign, or replicate a profile for the name---the name owner will need to do this ' +
@@ -937,13 +946,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 3,
@@ -970,7 +979,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 3,
@@ -1003,7 +1012,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'memo',
@@ -1043,13 +1052,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 5,
@@ -1077,7 +1086,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 3,
@@ -1105,7 +1114,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'zonefile',
@@ -1145,13 +1154,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'zonefile_hash',
