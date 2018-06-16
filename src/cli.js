@@ -1475,10 +1475,15 @@ function nameImport(network: Object, args: Array<string>) {
   const name = args[0];
   const IDrecipientAddr = args[1];
   const gaiaHubUrl = args[2];
-  const importKey = args[3];
+  const importKey = decodePrivateKey(args[3]);
   let zonefilePath = args[4]
   let zonefileHash = args[5];
   let zonefile = null;
+
+  if (safetyChecks && (typeof importKey !== 'string')) {
+    // multisig import not supported, unless we're testing 
+    throw new Error('Invalid argument: multisig is not supported at this time');
+  }
 
   if (!IDrecipientAddr.startsWith('ID-')) {
     throw new Error("Recipient ID-address must start with ID-");

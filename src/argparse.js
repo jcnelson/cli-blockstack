@@ -427,7 +427,7 @@ const CLI_ARGS = {
           name: 'reveal_key',
           type: "string",
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
         {
           name: 'zonefile',
@@ -588,7 +588,7 @@ const CLI_ARGS = {
           name: 'reveal_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: PRIVATE_KEY_PATTERN,
+          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
         },
       ],
       minItems: 2,
