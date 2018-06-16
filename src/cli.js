@@ -3,14 +3,12 @@
 const blockstack = require('blockstack');
 import process from 'process';
 import bitcoinjs from 'bitcoinjs-lib';
-import ecurve from 'ecurve';
 import fs from 'fs';
 const bigi = require('bigi')
 const URL = require('url')
 const bip39 = require('bip39')
 const crypto = require('crypto')
 const ZoneFile = require('zone-file')
-const RIPEMD160 = require('ripemd160')
 
 import {
   parseZoneFile
@@ -20,9 +18,6 @@ import {
   getOwnerKeyInfo,
   getPaymentKeyInfo
 } from './keys';
-
-import { ECPair } from 'bitcoinjs-lib';
-const secp256k1 = ecurve.getCurveByName('secp256k1');
 
 const Promise = require('bluebird');
 Promise.onPossiblyUnhandledRejection(function(error){
@@ -49,6 +44,19 @@ import {
   getNetwork
 } from './network';
 
+import {
+  MultiSigKeySigner,
+  SafetyError,
+  JSONStringify,
+  getPrivateKeyAddress,
+  isSubdomain,
+  canonicalPrivateKey,
+  sumUTXOs,
+  hash160,
+  checkUrl,
+  decodePrivateKey
+} from './utils';
+
 // global CLI options
 let txOnly = false;
 let estimateOnly = false;
@@ -58,98 +66,6 @@ let gracePeriod = 5000;
 
 let BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
 
-class SafetyError extends Error {
-  safetyErrors: Object
-  constructor(safetyErrors: Object) {
-    super(JSONStringify(safetyErrors, true));
-    this.safetyErrors = safetyErrors;
-  }
-}
-
-/*
- * JSON stringify helper
- * -- if stdout is a TTY, then pretty-format the JSON
- * -- otherwise, print it all on one line to make it easy for programs to consume
- */
-function JSONStringify(obj: any, stderr: boolean = false) : string {
-  if ((!stderr && process.stdout.isTTY) || (stderr && process.stderr.isTTY)) {
-    return JSON.stringify(obj, null, 2);
-  }
-  else {
-    return JSON.stringify(obj);
-  }
-}
-
-/*
- * Get a private key's address.  Honor the 01 to compress the public key
- * @privateKey (string) the hex-encoded private key
- */
-function getPrivateKeyAddress(network: Object, privateKey: string) : string {
-  const compressed = privateKey.substring(64,66) === '01';
-  const publicKey = blockstack.getPublicKeyFromPrivate(
-    privateKey.substring(0,64));
-  const publicKeyBuffer = new Buffer(publicKey, 'hex');
-
-  const Q = ecurve.Point.decodeFrom(secp256k1, publicKeyBuffer);
-  const ecKeyPair = new ECPair(null, Q, { compressed: compressed });
-  return network.coerceAddress(ecKeyPair.getAddress());
-}
-
-/*
- * Is a name a sponsored name (a subdomain)?
- */
-function isSubdomain(name: string) : boolean {
-  return !!name.match(/^[^\.]+\.[^.]+\.[^.]+$/);
-}
-
-/*
- * Get the canonical form of a hex-encoded private key
- * (i.e. strip the trailing '01' if present)
- */
-function canonicalPrivateKey(privkey: string) : string {
-  if (privkey.length == 66 && privkey.slice(-2) === '01') {
-    return privkey.substring(0,64);
-  }
-  return privkey;
-}
-    
-/* 
- * Get the sum of a set of UTXOs' values
- * @txIn (object) the transaction
- */
-type UTXO = { value?: number,
-              confirmations?: number,
-              tx_hash: string,
-              tx_output_n: number }
-
-function sumUTXOs(utxos: Array<UTXO>) {
-  return utxos.reduce((agg, x) => agg + x.value, 0);
-}
-
-/*
- * Hash160 function for zone files
- */
-function hash160(buff: Buffer) {
-  const sha256 = bitcoinjs.crypto.sha256(buff)
-  return (new RIPEMD160()).update(sha256).digest()
-}
-
-/*
- * Normalize a URL--remove duplicate /'s from the root of the path.
- * Throw an exception if it's not well-formed.
- */
-function checkUrl(url: string) : string {
-  let urlinfo = URL.parse(url);
-  if (!urlinfo.protocol) {
-    throw new Error(`Malformed full URL: missing scheme in ${url}`);
-  }
- 
-  if (!urlinfo.path || urlinfo.path.startsWith('//')) {
-    throw new Error(`Malformed full URL: path root has multiple /'s: ${url}`);
-  }
-
-  return url;
-}
 
 /*
  * Easier-to-use getNameInfo.  Returns null if the name does not exist.
@@ -386,7 +302,7 @@ function getNameZonefile(network: Object, args: Array<string>) {
 function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boolean = false) {
   const name = args[0];
   const IDaddress = args[1];
-  const paymentKey = args[2];
+  const paymentKey = decodePrivateKey(args[2]);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
   if (!IDaddress.startsWith('ID-')) {
@@ -528,7 +444,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
 function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boolean = false) {
   const name = args[0];
   const IDaddress = args[1];
-  const paymentKey = args[2];
+  const paymentKey = decodePrivateKey(args[2]);
 
   if (!IDaddress.startsWith('ID-')) {
     throw new Error("Recipient ID-address must start with ID-");
@@ -710,8 +626,8 @@ function makeZonefile(network: Object, args: Array<string>) {
 function update(network: Object, args: Array<string>) {
   const name = args[0];
   let zonefilePath = args[1];
-  const ownerKey = args[2];
-  const paymentKey = args[3];
+  const ownerKey = decodePrivateKey(args[2]);
+  const paymentKey = decodePrivateKey(args[3]);
 
   let zonefile = null;
   let zonefileHash = null;
@@ -822,8 +738,8 @@ function transfer(network: Object, args: Array<string>) {
   const name = args[0];
   const IDaddress = args[1];
   const keepZoneFile = (args[2].toLowerCase() === 'true');
-  const ownerKey = args[3];
-  const paymentKey = args[4];
+  const ownerKey = decodePrivateKey(args[3]);
+  const paymentKey = decodePrivateKey(args[4]);
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
@@ -929,8 +845,8 @@ function transfer(network: Object, args: Array<string>) {
  */
 function renew(network: Object, args: Array<string>) {
   const name = args[0];
-  const ownerKey = args[1];
-  const paymentKey = args[2];
+  const ownerKey = decodePrivateKey(args[1]);
+  const paymentKey = decodePrivateKey(args[2]);
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
   const namespaceID = name.split('.').slice(-1)[0];
@@ -1105,8 +1021,8 @@ function renew(network: Object, args: Array<string>) {
  */
 function revoke(network: Object, args: Array<string>) {
   const name = args[0];
-  const ownerKey = args[1];
-  const paymentKey = args[2];
+  const ownerKey = decodePrivateKey(args[1]);
+  const paymentKey = decodePrivateKey(args[2]);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
   const ownerAddress = getPrivateKeyAddress(network, ownerKey);
 
@@ -1200,7 +1116,7 @@ function revoke(network: Object, args: Array<string>) {
 function namespacePreorder(network: Object, args: Array<string>) {
   const namespaceID = args[0];
   const address = args[1];
-  const paymentKey = args[2];
+  const paymentKey = decodePrivateKey(args[2]);
   const paymentAddress = getPrivateKeyAddress(network, paymentKey);
 
   const txPromise = blockstack.transactions.makeNamespacePreorder(
@@ -1310,7 +1226,7 @@ function namespaceReveal(network: Object, args: Array<string>) {
   const bucketString = args[6];
   const nonalphaDiscount = parseInt(args[7]);
   const noVowelDiscount = parseInt(args[8]);
-  const paymentKey = args[9];
+  const paymentKey = decodePrivateKey(args[9]);
 
   const buckets = bucketString.split(',')
     .map((x) => {return parseInt(x)});
@@ -1422,7 +1338,7 @@ function namespaceReveal(network: Object, args: Array<string>) {
  */
 function namespaceReady(network: Object, args: Array<string>) {
   const namespaceID = args[0];
-  const revealKey = args[1];
+  const revealKey = decodePrivateKey(args[1]);
   const revealAddress = getPrivateKeyAddress(network, revealKey);
 
   const txPromise = blockstack.transactions.makeNamespaceReady(
@@ -1701,7 +1617,7 @@ function nameImport(network: Object, args: Array<string>) {
  */
 function announce(network: Object, args: Array<string>) {
   const messageHash = args[0];
-  const senderKey = args[1];
+  const senderKey = decodePrivateKey(args[1]);
 
   const senderAddress = getPrivateKeyAddress(network, senderKey);
 
@@ -1777,7 +1693,7 @@ function announce(network: Object, args: Array<string>) {
  * well as the zone file.  Also create and replicate
  * the profile to the Gaia hub.
  * @arg name (string) the name to register
- * @arg ownerKey (string) the hex-encoded owner private key
+ * @arg ownerKey (string) the hex-encoded owner private key (must be singlesig)
  * @arg paymentKey (string) the hex-encoded payment key to purchase this name
  * @arg gaiaHubUrl (string) the gaia hub URL to use
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
@@ -1785,8 +1701,8 @@ function announce(network: Object, args: Array<string>) {
  */
 function register(network: Object, args: Array<string>) {
   const name = args[0];
-  const ownerKey = args[1];
-  const paymentKey = args[2];
+  const ownerKey = decodePrivateKey(args[1]);
+  const paymentKey = decodePrivateKey(args[2]);
   const gaiaHubUrl = args[3];
 
   const address = getPrivateKeyAddress(network, ownerKey);
@@ -1915,7 +1831,7 @@ function register(network: Object, args: Array<string>) {
  * and register transactions to the broadcaster, as 
  * well as the zone file.
  * @arg name (string) the name to register
- * @arg ownerKey (string) the hex-encoded owner private key
+ * @arg ownerAddress (string) the ID-address of the owner
  * @arg paymentKey (string) the hex-encoded payment key to purchase this name
  * @arg gaiaHubUrl (string) the gaia hub URL to use
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
@@ -1924,7 +1840,7 @@ function register(network: Object, args: Array<string>) {
 function registerAddr(network: Object, args: Array<string>) {
   const name = args[0];
   const IDaddress = args[1];
-  const paymentKey = args[2];
+  const paymentKey = decodePrivateKey(args[2]);
   const gaiaHubUrl = args[3];
 
   const address = IDaddress.slice(3);
@@ -2041,7 +1957,7 @@ function registerAddr(network: Object, args: Array<string>) {
  * Register a subdomain name the easy way.  Send the
  * zone file and signed subdomain records to the subdomain registrar.
  * @arg name (string) the name to register
- * @arg ownerKey (string) the hex-encoded owner private key
+ * @arg ownerKey (string) the hex-encoded owner private key (must be single-sig)
  * @arg gaiaHubUrl (string) the gaia hub URL to use
  * @arg registrarUrl (string) OPTIONAL the registrar URL
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
@@ -2049,7 +1965,7 @@ function registerAddr(network: Object, args: Array<string>) {
  */
 function registerSubdomain(network: Object, args: Array<string>) {
   const name = args[0];
-  const ownerKey = args[1];
+  const ownerKey = decodePrivateKey(args[1]);
   const gaiaHubUrl = args[2];
   const registrarUrl = args[3];
 
@@ -2181,11 +2097,11 @@ function registerSubdomain(network: Object, args: Array<string>) {
 /*
  * Sign a profile.
  * @path (string) path to the profile
- * @privateKey (string) the owner key
+ * @privateKey (string) the owner key (must be single-sig)
  */
 function profileSign(network: Object, args: Array<string>) {
   const profilePath = args[0];
-  const privateKey = args[1];
+  const privateKey = decodePrivateKey(args[1]);
   const profileData = JSON.parse(fs.readFileSync(profilePath).toString());
   return Promise.resolve().then(() => {
     const signedToken = blockstack.signProfileToken(profileData, privateKey);
@@ -2357,7 +2273,7 @@ function makeZonefileFromGaiaUrl(network: Object, name: string,
 function profileStore(network: Object, args: Array<string>) {
   let nameOrAddress = args[0];
   const signedProfilePath = args[1];
-  const privateKey = args[2];
+  const privateKey = decodePrivateKey(args[2]);
   const gaiaHubUrl = args[3];
 
   const signedProfileData = fs.readFileSync(signedProfilePath).toString();
@@ -2578,13 +2494,21 @@ function getAccountAt(network: Object, args: Array<string>) {
 function sendBTC(network: Object, args: Array<string>) {
   const destinationAddress = args[0]
   const amount = parseInt(args[1])
-  const paymentKeyHex = args[2];
+  const paymentKeyHex = decodePrivateKey(args[2]);
 
   if (amount <= 5500) {
     throw new Error("Invalid amount (must be greater than 5500)")
   }
 
-  const paymentKey = blockstack.PubkeyHashSigner.fromHexString(paymentKeyHex)
+  let paymentKey;
+  if (typeof paymentKeyHex === 'string') {
+    // single-sig
+    paymentKey = blockstack.PubkeyHashSigner.fromHexString(paymentKeyHex);
+  }
+  else {
+    // multi-sig 
+    paymentKey = paymentKeyHex;
+  }
 
   const txPromise = paymentKey.getAddress().then(
     (paymentAddress) =>
@@ -2672,7 +2596,7 @@ function sendTokens(network: Object, args: Array<string>) {
   const recipientAddress = args[0];
   const tokenType = args[1];
   const tokenAmount = bigi.fromByteArrayUnsigned(args[2]);
-  const privateKey = args[3];
+  const privateKey = decodePrivateKey(args[3]);
   let memo = "";
 
   if (args.length > 4) {
