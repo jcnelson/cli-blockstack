@@ -2233,7 +2233,8 @@ function makeZonefileFromGaiaUrl(network: Object, name: string,
     return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(ownerKey));
   })
   .then((hubConfig) => {
-    if (hubConfig.address !== mainnetAddress) {
+    // this fixes a bug in some versions of blockstack.js
+    if (hubConfig.address !== mainnetAddress && hubConfig.address !== address) {
       throw new Error(`Invalid private key: ${hubConfig.address} != ${mainnetAddress}`);
     }
     if (!hubConfig.url_prefix) {
