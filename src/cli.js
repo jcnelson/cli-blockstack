@@ -2168,9 +2168,12 @@ function gaiaUpload(network: Object,
   const ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress); 
   return blockstack.connectToGaiaHub(gaiaHubURL, canonicalPrivateKey(privateKey))
     .then((hubConfig) => {
-      if (hubConfig.address !== ownerAddressMainnet) {
-        throw new Error(`Invalid private key: ${hubConfig.address} != ${ownerAddressMainnet}`);
+      if (network.coerceMainnetAddress(hubConfig.address) !== ownerAddressMainnet) {
+        throw new Error('Invalid private key: ' +
+          `${network.coerceMainnetAddress(hubConfig.address)} != ${ownerAddressMainnet}`);
       }
+      // this fixes a bug in some versions of blockstack.js
+      hubConfig.address = ownerAddressMainnet;
       return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
     });
 }
