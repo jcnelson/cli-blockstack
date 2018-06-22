@@ -12,12 +12,18 @@ const secp256k1 = ecurve.getCurveByName('secp256k1');
 
 import {
   PRIVATE_KEY_PATTERN,
-  PRIVATE_KEY_MULTISIG_PATTERN
+  PRIVATE_KEY_MULTISIG_PATTERN,
+  PRIVATE_KEY_SEGWIT_P2SH_PATTERN
 } from './argparse';
 
 import {
   TransactionSigner
 } from 'blockstack';
+
+type UTXO = { value?: number,
+              confirmations?: number,
+              tx_hash: string,
+              tx_output_n: number }
 
 export class MultiSigKeySigner implements TransactionSigner {
   redeemScript: Buffer
@@ -53,6 +59,80 @@ export class MultiSigKeySigner implements TransactionSigner {
         txIn.sign(signingIndex, ecPair, this.redeemScript)
       })
     });
+  }
+}
+
+
+export class SegwitP2SHKeySigner implements TransactionSigner {
+  redeemScript: Buffer
+  witnessScript: Buffer
+  privateKeys: Array<string>
+  address: string
+  m: number
+  constructor(redeemScript: string, witnessScript: string, m: number, privateKeys: Array<string>) {
+
+    const scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
+      bitcoinjs.crypto.hash160(redeemScript));
+
+    this.address = bitcoinjs.address.fromOutputScript(
+      scriptPubKey, blockstack.config.network.layer1); 
+    this.redeemScript = Buffer.from(redeemScript, 'hex');
+    this.witnessScript = Buffer.from(witnessScript, 'hex');
+    this.privateKeys = privateKeys;
+    this.m = m;
+  }
+
+  getAddress() : Promise<string> {
+    return Promise.resolve().then(() => this.address);
+  }
+
+  findUTXO(txIn: bitcoinjs.TransactionBuilder, signingIndex: number, utxos: Array<UTXO>) : UTXO {
+    // NOTE: this is O(n*2) complexity for n UTXOs when signing an n-input transaction
+    const txidBuf = new Buffer(txIn.tx.ins[signingIndex].hash.slice());
+    const outpoint = txIn.tx.ins[signingIndex].index;
+    
+    txidBuf.reverse(); // NOTE: bitcoinjs encodes txid as big-endian
+    const txid = txidBuf.toString('hex')
+
+    for (let i = 0; i < utxos.length; i++) {
+      if (utxos[i].tx_hash === txid && utxos[i].tx_output_n === outpoint) {
+        if (!utxos[i].value) {
+          throw new Error(`UTXO for hash=${txid} vout=${outpoint} has no value`);
+        }
+        return utxos[i];
+      }
+    }
+    throw new Error(`No UTXO for input hash=${txid} vout=${outpoint}`);
+  }
+
+  signTransaction(txIn: bitcoinjs.TransactionBuilder, signingIndex: number) : Promise<void> {
+    // This is an interface issue more than anything else.  Basically, in order to
+    // form the segwit sighash, we need the UTXOs.  If we knew better, we would have
+    // blockstack.js simply pass the consumed UTXO into this method.  But alas, we do
+    // not.  Therefore, we need to re-query them.  This is probably fine, since we're
+    // not pressured for time when it comes to generating transactions.
+    return Promise.resolve().then(() => {
+        return this.getAddress();
+      })
+      .then((address) => {
+        return blockstack.config.network.getUTXOs(address);
+      })
+      .then((utxos) => {
+        const utxo = this.findUTXO(txIn, signingIndex, utxos);
+        if (this.m === 1) {
+          // p2sh-p2wpkh
+          const ecPair = blockstack.hexStringToECPair(this.privateKeys[0]);
+          txIn.sign(signingIndex, ecPair, this.redeemScript, null, utxo.value);
+        }
+        else {
+          // p2sh-p2wsh
+          const keysToUse = this.privateKeys.slice(0, this.m)
+          keysToUse.forEach((keyHex) => {
+            const ecPair = blockstack.hexStringToECPair(keyHex)
+            txIn.sign(signingIndex, ecPair, this.redeemScript, null, utxo.value, this.witnessScript);
+          });
+        }
+      });
   }
 }
 
@@ -103,6 +183,63 @@ export function parseMultiSigKeys(serializedPrivateKeys: string) : MultiSigKeySi
   return new MultiSigKeySigner(redeemScript, privkeys);
 }
 
+
+/*
+ * Parse a string into a SegwitP2SHKeySigner
+ * The string has the format "segwit:p2sh:m,pk1,pk2,...,pkn"
+ * @serializedPrivateKeys (string) the above string
+ * @return a MultiSigKeySigner instance
+ */
+export function parseSegwitP2SHKeys(serializedPrivateKeys: string) : SegwitP2SHKeySigner {
+  const matches = serializedPrivateKeys.match(PRIVATE_KEY_SEGWIT_P2SH_PATTERN);
+  if (!matches) {
+    throw new Error('Invalid segwit p2sh private key string');
+  }
+  
+  const m = parseInt(matches[1]);
+  const parts = serializedPrivateKeys.split(',');
+  const privkeys = [];
+  for (let i = 1; i < 256; i++) {
+    const pk = parts[i];
+    if (!pk) {
+      break;
+    }
+
+    if (!pk.match(PRIVATE_KEY_PATTERN)) {
+      throw new Error('Invalid private key string');
+    }
+
+    privkeys.push(pk);
+  }
+
+  // generate public keys 
+  const pubkeys = privkeys.map((pk) => {
+    return Buffer.from(getPublicKeyFromPrivateKey(pk), 'hex');
+  });
+
+  // generate redeem script for p2wpkh or p2sh, depending on how many keys 
+  let redeemScript;
+  let scriptPubKey;
+  let witnessScript = '';
+  if (m === 1) {
+    // p2wpkh 
+    const pubKeyHash = bitcoinjs.crypto.hash160(pubkeys[0]);
+    redeemScript = bitcoinjs.script.witnessPubKeyHash.output.encode(pubKeyHash);
+    scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
+      bitcoinjs.crypto.hash160(redeemScript));
+  }
+  else {
+    // p2wsh
+    witnessScript = bitcoinjs.script.multisig.output.encode(m, pubkeys);
+    redeemScript = bitcoinjs.script.witnessScriptHash.output.encode(
+      bitcoinjs.crypto.sha256(witnessScript));
+    scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
+      bitcoinjs.crypto.hash160(redeemScript));
+  }
+
+  return new SegwitP2SHKeySigner(redeemScript, witnessScript, m, privkeys);
+}
+
 /*
  * Decode one or more private keys from a string.
  * Can be used to parse single private keys (as strings),
@@ -121,6 +258,12 @@ export function decodePrivateKey(serializedPrivateKey: string) : string | Transa
   if (!!multiKeyMatches) {
     // multisig bundle 
     return parseMultiSigKeys(serializedPrivateKey);
+  }
+
+  const segwitP2SHMatches = serializedPrivateKey.match(PRIVATE_KEY_SEGWIT_P2SH_PATTERN);
+  if (!!segwitP2SHMatches) {
+    // segwit p2sh bundle
+    return parseSegwitP2SHKeys(serializedPrivateKey);
   }
 
   throw new Error('Unparseable private key');
@@ -200,11 +343,6 @@ export function canonicalPrivateKey(privkey: string) : string {
  * Get the sum of a set of UTXOs' values
  * @txIn (object) the transaction
  */
-type UTXO = { value?: number,
-              confirmations?: number,
-              tx_hash: string,
-              tx_output_n: number }
-
 export function sumUTXOs(utxos: Array<UTXO>) {
   return utxos.reduce((agg, x) => agg + x.value, 0);
 }
