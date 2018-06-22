@@ -21,11 +21,19 @@ export const ID_ADDRESS_PATTERN = `^ID-${ADDRESS_CHARS}$`;
 
 // hex private key
 export const PRIVATE_KEY_PATTERN = 
-  '^([0-9a-f]{64,66})$'
+  '^([0-9a-f]{64,66})$';
 
 // m,pk1,pk2,...,pkn
 export const PRIVATE_KEY_MULTISIG_PATTERN =
-  '^([0-9]+),([0-9a-f]{64,66},)*([0-9a-f]{64,66})$'
+  '^([0-9]+),([0-9a-f]{64,66},)*([0-9a-f]{64,66})$';
+
+// segwit:p2sh:m,pk1,pk2,...,pkn
+export const PRIVATE_KEY_SEGWIT_P2SH_PATTERN =
+  `^segwit:p2sh:([0-9]+),([0-9a-f]{64,66},)*([0-9a-f]{64,66})$`;
+
+// any private key pattern we support 
+export const PRIVATE_KEY_PATTERN_ANY = 
+  `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}|${PRIVATE_KEY_SEGWIT_P2SH_PATTERN}`;
 
 export const PUBLIC_KEY_PATTERN = 
   '^([0-9a-f]{66,130})$'
@@ -86,7 +94,7 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: "string",
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 2,
@@ -186,7 +194,7 @@ const CLI_ARGS = {
           name: 'private_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         }
       ],
       minItems: 1,
@@ -427,7 +435,7 @@ const CLI_ARGS = {
           name: 'reveal_key',
           type: "string",
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'zonefile',
@@ -487,7 +495,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 3,
@@ -565,7 +573,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 10,
@@ -588,7 +596,7 @@ const CLI_ARGS = {
           name: 'reveal_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 2,
@@ -714,13 +722,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'new_id_address',
@@ -767,7 +775,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'gaia_hub',
@@ -832,7 +840,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'gaia_url_prefix',
@@ -946,13 +954,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 3,
@@ -979,7 +987,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 3,
@@ -1012,7 +1020,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'memo',
@@ -1052,13 +1060,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 5,
@@ -1086,7 +1094,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
       ],
       minItems: 3,
@@ -1114,7 +1122,7 @@ const CLI_ARGS = {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'zonefile',
@@ -1154,13 +1162,13 @@ const CLI_ARGS = {
           name: 'owner_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'payment_key',
           type: 'string',
           realtype: 'private_key',
-          pattern: `${PRIVATE_KEY_PATTERN}|${PRIVATE_KEY_MULTISIG_PATTERN}`,
+          pattern: `${PRIVATE_KEY_PATTERN_ANY}`
         },
         {
           name: 'zonefile_hash',
