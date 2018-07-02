@@ -2,9 +2,10 @@
 
 const Ajv = require('ajv');
 const process = require('process');
+const c32check = require('c32check');
 
-import os from 'os'
-import fs from 'fs'
+import os from 'os';
+import fs from 'fs';
 
 export const NAME_PATTERN = 
   '^([0-9a-z_.+-]{3,37})$'
@@ -15,9 +16,13 @@ export const NAMESPACE_PATTERN =
 export const ADDRESS_CHARS = 
   '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{1,35}';
 
+export const C32_ADDRESS_CHARS = '[0123456789ABCDEFGHJKMNPQRSTVWXYZ]+';
+
 export const ADDRESS_PATTERN = `^(${ADDRESS_CHARS})$`;
 
 export const ID_ADDRESS_PATTERN = `^ID-${ADDRESS_CHARS}$`;
+
+export const STACKS_ADDRESS_PATTERN = `^(${C32_ADDRESS_CHARS})$`;
 
 // hex private key
 export const PRIVATE_KEY_PATTERN = 
@@ -128,7 +133,7 @@ const CLI_ARGS = {
           name: 'address',
           type: "string",
           realtype: 'address',
-          pattern: ADDRESS_PATTERN,
+          pattern: `${ADDRESS_PATTERN}|${STACKS_ADDRESS_PATTERN}`,
         }
       ],
       minItems: 1,
@@ -136,6 +141,21 @@ const CLI_ARGS = {
       help: 'Query the balance of an account.  Returns the balances of each kind of token ' +
       'that the account owns.  The balances will be in the *smallest possible units* of the ' +
       'token (i.e. satoshis for BTC, microStacks for Stacks, etc.).',
+      group: 'Account Management',
+    },
+    convert_address: {
+      type: "array",
+      items: [
+        {
+          name: "address",
+          type: "string",
+          realtype: "address",
+          pattern: `${ADDRESS_PATTERN}|${STACKS_ADDRESS_PATTERN}`
+        },
+      ],
+      minItems: 1,
+      maxItems: 1,
+      help: 'Convert a Bitcoin address to a Stacks address and vice versa.',
       group: 'Account Management',
     },
     gaia_getfile: {
@@ -251,7 +271,7 @@ const CLI_ARGS = {
           name: 'address',
           type: "string",
           realtype: 'address',
-          pattern: ADDRESS_PATTERN,
+          pattern: STACKS_ADDRESS_PATTERN,
         },
         {
           name: 'startblock',
@@ -286,7 +306,7 @@ const CLI_ARGS = {
           name: 'address',
           type: "string",
           realtype: 'address',
-          pattern: ADDRESS_PATTERN,
+          pattern: STACKS_ADDRESS_PATTERN,
         },
         {
           name: 'blocknumber',
@@ -1144,7 +1164,7 @@ const CLI_ARGS = {
           name: 'address',
           type: 'string',
           realtype: 'address',
-          pattern: ADDRESS_PATTERN,
+          pattern: STACKS_ADDRESS_PATTERN,
         },
         {
           name: 'type',
