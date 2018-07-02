@@ -4,6 +4,61 @@ const blockstack = require('blockstack')
 const keychains = require('blockstack-keychains')
 const bitcoin = require('bitcoinjs-lib')
 const bip39 = require('bip39')
+const crypto = require('crypto')
+
+import {
+  getPrivateKeyAddress
+} from './utils';
+
+const IDENTITY_KEYCHAIN = 888
+const BLOCKSTACK_ON_BITCOIN = 0
+const APPS_NODE_INDEX = 0
+const SIGNING_NODE_INDEX = 1
+const ENCRYPTION_NODE_INDEX = 2
+
+export const STRENGTH = 128;   // 12 words
+
+class IdentityAddressOwnerNode {
+  hdNode: Object
+  salt: string
+
+  constructor(ownerHdNode: Object, salt: string) {
+    this.hdNode = ownerHdNode
+    this.salt = salt
+  }
+
+  getNode() {
+    return this.hdNode
+  }
+
+  getSalt() {
+    return this.salt
+  }
+
+  getIdentityKey() {
+    return this.hdNode.keyPair.d.toBuffer(32).toString('hex')
+  }
+
+  getIdentityKeyID() {
+    return this.hdNode.keyPair.getPublicKeyBuffer().toString('hex')
+  }
+
+  getAppsNode() {
+    return new AppsNode(this.hdNode.deriveHardened(APPS_NODE_INDEX), this.salt)
+  }
+
+  getAddress() {
+    return this.hdNode.getAddress()
+  }
+
+  getEncryptionNode() {
+    return this.hdNode.deriveHardened(ENCRYPTION_NODE_INDEX)
+  }
+
+  getSigningNode() {
+    return this.hdNode.deriveHardened(SIGNING_NODE_INDEX)
+  }
+}
 
 // for portal versions before 2038088458012dcff251027ea23a22afce443f3b
 class IdentityNode{
@@ -47,12 +102,17 @@ function getIdentityNodeFromPhrase(phrase : string,
 
 function getIdentityKeyCurrent(pK : Object, index : number = 0){
   return new IdentityNode(
-    pK.deriveHardened(888).deriveHardened(0).deriveHardened(index));
+    pK.deriveHardened(IDENTITY_KEYCHAIN)
+      .deriveHardened(BLOCKSTACK_ON_BITCOIN)
+      .deriveHardened(index));
 }
 
 function getIdentityKey09to10(pK : Object, index : number = 0){
   return new IdentityNode(
-     pK.deriveHardened(888).deriveHardened(0).deriveHardened(index).derive(0));
+     pK.deriveHardened(IDENTITY_KEYCHAIN)
+       .deriveHardened(BLOCKSTACK_ON_BITCOIN)
+       .deriveHardened(index)
+       .derive(0));
 }
 
 function toAddress(k : Object) : string {
@@ -77,6 +137,108 @@ function getMaster(mnemonic : string) {
   const seed = bip39.mnemonicToSeed(mnemonic);
   return bitcoin.HDNode.fromSeedBuffer(seed);
 }
+
+
+// NOTE: legacy
+function hashCode(string) {
+  let hash = 0
+  if (string.length === 0) return hash
+  for (let i = 0; i < string.length; i++) {
+    const character = string.charCodeAt(i)
+    hash = (hash << 5) - hash + character
+    hash = hash & hash
+  }
+  return hash & 0x7fffffff
+}
+
+export class AppNode {
+  hdNode: Object
+  appDomain: string
+
+  constructor(hdNode: Object, appDomain: string) {
+    this.hdNode = hdNode
+    this.appDomain = appDomain
+  }
+
+  getAppPrivateKey() {
+    return this.hdNode.keyPair.d.toBuffer(32).toString('hex')
+  }
+
+  getAddress() {
+    return this.hdNode.getAddress()
+  }
+}
+
+export class AppsNode {
+  hdNode: Object
+  salt: string
+
+  constructor(appsHdNode: Object, salt: string) {
+    this.hdNode = appsHdNode
+    this.salt = salt
+  }
+
+  getNode() {
+    return this.hdNode
+  }
+
+  getAppNode(appDomain: string) {
+    const hash = crypto
+      .createHash('sha256')
+      .update(`${appDomain}${this.salt}`)
+      .digest('hex')
+    const appIndex = hashCode(hash)
+    const appNode = this.hdNode.deriveHardened(appIndex)
+    return new AppNode(appNode, appDomain)
+  }
+
+  toBase58() {
+    return this.hdNode.toBase58()
+  }
+
+  getSalt() {
+    return this.salt
+  }
+}
+
+export function getIdentityPrivateKeychain(masterKeychain: Object) {
+  return masterKeychain.deriveHardened(IDENTITY_KEYCHAIN).deriveHardened(BLOCKSTACK_ON_BITCOIN)
+}
+
+export function getIdentityPublicKeychain(masterKeychain: Object) {
+  return getIdentityPrivateKeychain(masterKeychain).neutered()
+}
+
+export function getIdentityOwnerAddressNode(
+  identityPrivateKeychain: Object, identityIndex: ?number = 0) {
+  if (identityPrivateKeychain.isNeutered()) {
+    throw new Error('You need the private key to generate identity addresses')
+  }
+
+  const publicKeyHex = identityPrivateKeychain.keyPair.getPublicKeyBuffer().toString('hex')
+  const salt = crypto
+    .createHash('sha256')
+    .update(publicKeyHex)
+    .digest('hex')
+
+  return new IdentityAddressOwnerNode(identityPrivateKeychain.deriveHardened(identityIndex), salt)
+}
+
+export function deriveIdentityKeyPair(identityOwnerAddressNode: Object) {
+  const address = identityOwnerAddressNode.getAddress()
+  const identityKey = identityOwnerAddressNode.getIdentityKey()
+  const identityKeyID = identityOwnerAddressNode.getIdentityKeyID()
+  const appsNode = identityOwnerAddressNode.getAppsNode()
+  const keyPair = {
+    key: identityKey,
+    keyID: identityKeyID,
+    address,
+    appsNodeKey: appsNode.toBase58(),
+    salt: appsNode.getSalt()
+  }
+  return keyPair
+}
+
 
 /*
  * Get the owner key information for a 12-word phrase, at a specific index.
@@ -124,3 +286,77 @@ export function getPaymentKeyInfo(mnemonic : string) {
   };
 }
 
+/*
+ * Find the index of an ID address, given the mnemonic.
+ * Returns the index if found
+ * Returns -1 if not found
+ */
+export function findIdentityIndex(mnemonic: string, idAddress: string, maxIndex: ?number = 32) {
+  // for reasons unfathomable to me (perhaps it's because ECMAscript and all of its
+  // tooling are dumpster fires), flow thinks that maxIndex is null or undefined until I add
+  // this line:
+  if (!maxIndex) {
+    maxIndex = 16;
+  }
+
+  const network = blockstack.config.network;
+  if (idAddress.substring(0,3) !== 'ID-') {
+    throw new Error('Not an identity address')
+  }
+
+  for (let i = 0; i < maxIndex; i++) {
+    const identity = getIdentityNodeFromPhrase(mnemonic, i, 'v0.10-current');
+    if (network.coerceAddress(toAddress(identity)) === 
+        network.coerceAddress(idAddress.slice(3))) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+/*
+ * Get the Gaia application key from a 12-word phrase
+ * @mmemonic (string) the 12-word phrase
+ * @idAddress (string) the ID-address used to sign in
+ * @appDomain (string) the application's Origin
+ *
+ * Returns an object with
+ *    .keyInfo (object) the app key info with the current derivation path 
+ *      .privateKey (string) the app's hex private key
+ *      .address (string) the address of the private key
+ *    .legacyKeyInfo (object) the app key info with the legacy derivation path
+ *      .privateKey (string) the app's hex private key
+ *      .address (string) the address of the private key
+ */
+export function getApplicationKeyInfo(mnemonic : string, idAddress: string, appDomain: string) {
+  const network = blockstack.config.network;
+  const idIndex = findIdentityIndex(mnemonic, idAddress);
+  if (idIndex < 0) {
+    throw new Error('Identity address does not belong to this keychain');
+  }
+
+  const masterKeychain = getMaster(mnemonic);
+  const identityPrivateKeychainNode = getIdentityPrivateKeychain(masterKeychain);
+  const identityOwnerAddressNode = getIdentityOwnerAddressNode(
+    identityPrivateKeychainNode, idIndex);
+
+  // legacy app key (will update later to use the longer derivation path)
+  const identityInfo = deriveIdentityKeyPair(identityOwnerAddressNode);
+  const appsNodeKey = identityInfo.appsNodeKey;
+  const salt = identityInfo.salt;
+  const appsNode = new AppsNode(bitcoin.HDNode.fromBase58(appsNodeKey), salt);
+  const appPrivateKey = appsNode.getAppNode(appDomain).getAppPrivateKey();
+
+  const res = {
+    keyInfo: {
+      privateKey: 'TODO',
+      address: 'TODO',
+    },
+    legacyKeyInfo: {
+      privateKey: appPrivateKey,
+      address: getPrivateKeyAddress(network, `${appPrivateKey}01`)
+    }
+  };
+  return res;
+}
