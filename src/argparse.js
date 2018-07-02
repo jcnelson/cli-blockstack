@@ -23,6 +23,10 @@ export const ID_ADDRESS_PATTERN = `^ID-${ADDRESS_CHARS}$`;
 export const PRIVATE_KEY_PATTERN = 
   '^([0-9a-f]{64,66})$';
 
+// hex private key, no compression
+export const PRIVATE_KEY_UNCOMPRESSED_PATTERN = 
+  '^([0-9a-f]{64})$';
+
 // m,pk1,pk2,...,pkn
 export const PRIVATE_KEY_MULTISIG_PATTERN =
   '^([0-9]+),([0-9a-f]{64,66},)*([0-9a-f]{64,66})$';
@@ -49,6 +53,10 @@ export const SUBDOMAIN_PATTERN =
 
 export const TXID_PATTERN = 
   '^([0-9a-f]{64})$'
+
+export const PATH_PATTERN = '^[/]+.+$'
+
+export const BOOLEAN_PATTERN = '^(0|1|true|false)$'
 
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
@@ -129,6 +137,112 @@ const CLI_ARGS = {
       'that the account owns.  The balances will be in the *smallest possible units* of the ' +
       'token (i.e. satoshis for BTC, microStacks for Stacks, etc.).',
       group: 'Account Management',
+    },
+    gaia_getfile: {
+      type: "array",
+      items: [
+        {
+          name: 'blockstack_id',
+          type: 'string',
+          realtype: 'blockstack_id',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+        {
+          name: 'origin',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'path',
+          type: 'string',
+          realtype: 'path',
+          pattern: PATH_PATTERN,
+        },
+        {
+          name: 'app_private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+        },
+        {
+          name: 'verify',
+          type: 'string',
+          realtype: 'boolean',
+          pattern: BOOLEAN_PATTERN,
+        },
+      ],
+      minItems: 3,
+      maxItems: 5,
+      help: 'Get a file from another user\'s Gaia hub.  Prints the file data to stdout.',
+      group: 'Gaia',
+    },
+    gaia_putfile: {
+      type: "array",
+      items: [
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+        },
+        {
+          name: 'dataPath',
+          type: 'string',
+          realtype: 'path',
+          pattern: '.+',
+        },
+        {
+          name: 'gaiaPath',
+          type: 'string',
+          realtype: 'path',
+          pattern: PATH_PATTERN,
+        },
+        {
+          name: 'encrypt',
+          type: 'string',
+          realtype: 'boolean',
+          pattern: BOOLEAN_PATTERN,
+        },
+        {
+          name: 'sign',
+          type: 'string',
+          realtype: 'boolean',
+          pattern: BOOLEAN_PATTERN,
+        },
+      ],
+      minItems: 4,
+      maxItems: 6,
+      help: 'Put a file into a given Gaia hub, authenticating with the given app private key.  ' +
+      'Optionally encrypt and/or sign the data with the given app private key.',
+      group: 'Gaia',
+    },
+    gaia_listfiles: {
+      type: "array",
+      items: [
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+        },
+      ],
+      minItems: 2,
+      maxItems: 2,
+      help: 'List all the files in a Gaia hub, authenticating with the given app private key.',
+      group: 'Gaia',
     },
     get_account_history: {
       type: "array",
@@ -266,6 +380,34 @@ const CLI_ARGS = {
       'is used mainly for debugging and diagnostics, and is not guaranteed to be stable across ' +
       'releases.',
       group: 'Namespace Operations',
+    },
+    get_app_keys: {
+      type: "array",
+      items: [
+        {
+          name: 'backup_phrase',
+          type: 'string',
+          realtype: 'backup_phrase',
+        },
+        {
+          name: 'id_address',
+          type: 'string',
+          realtype: 'id-address',
+          pattern: ID_ADDRESS_PATTERN,
+        },
+        {
+          name: 'app_origin',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: 'Get the application private key from a 12-word backup phrase and an ID-address.  ' +
+      'This is the private key used to sign data in Gaia, and its address is the Gaia bucket ' +
+      'address.',
+      group: 'Key Management',
     },
     get_owner_keys: {
       type: "array",
