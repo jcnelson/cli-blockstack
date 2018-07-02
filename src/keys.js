@@ -5,6 +5,7 @@ const keychains = require('blockstack-keychains')
 const bitcoin = require('bitcoinjs-lib')
 const bip39 = require('bip39')
 const crypto = require('crypto')
+const c32check = require('c32check')
 
 import {
   getPrivateKeyAddress
@@ -281,7 +282,10 @@ export function getPaymentKeyInfo(mnemonic : string) {
   const privkey = identity.keyPair.d.toHex() + '01';
   return {
     privateKey: privkey,
-    address: addr,
+    address: {
+      BTC: addr,
+      STACKS: c32check.b58ToC32(addr),
+    },
     index: 0
   };
 }
@@ -292,9 +296,6 @@ export function getPaymentKeyInfo(mnemonic : string) {
  * Returns -1 if not found
  */
 export function findIdentityIndex(mnemonic: string, idAddress: string, maxIndex: ?number = 32) {
-  // for reasons unfathomable to me (perhaps it's because ECMAscript and all of its
-  // tooling are dumpster fires), flow thinks that maxIndex is null or undefined until I add
-  // this line:
   if (!maxIndex) {
     maxIndex = 16;
   }
