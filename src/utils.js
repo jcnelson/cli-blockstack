@@ -3,7 +3,8 @@
 const bitcoinjs = require('bitcoinjs-lib');
 const blockstack = require('blockstack');
 const URL = require('url');
-const RIPEMD160 = require('ripemd160')
+const RIPEMD160 = require('ripemd160');
+const c32check = require('c32check');
 
 import ecurve from 'ecurve';
 
@@ -24,6 +25,7 @@ type UTXO = { value?: number,
               confirmations?: number,
               tx_hash: string,
               tx_output_n: number }
+
 
 export class MultiSigKeySigner implements TransactionSigner {
   redeemScript: Buffer
@@ -371,4 +373,3 @@ export function checkUrl(url: string) : string {
 
   return url;
 }
-
