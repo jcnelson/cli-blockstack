@@ -16,7 +16,10 @@ import {
 
 import {
   getOwnerKeyInfo,
-  getPaymentKeyInfo
+  getPaymentKeyInfo,
+  getApplicationKeyInfo,
+  findIdentityIndex,
+  STRENGTH,
 } from './keys';
 
 const Promise = require('bluebird');
@@ -1805,7 +1808,7 @@ function register(network: Object, args: Array<string>) {
     const tokenRecords = [wrappedToken];
     const signedProfileData = JSONStringify(tokenRecords);
 
-    return gaiaUploadAll(
+    return gaiaUploadProfileAll(
       network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
   })
   .then((gaiaUrls) => {
@@ -2009,7 +2012,7 @@ function registerSubdomain(network: Object, args: Array<string>) {
       const tokenRecords = [wrappedToken];
       const signedProfileData = JSONStringify(tokenRecords);
 
-      return gaiaUploadAll(
+      return gaiaUploadProfileAll(
         network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
     })
     .then((gaiaUrls) => {
@@ -2154,16 +2157,16 @@ function profileVerify(network: Object, args: Array<string>) {
 }
 
 /*
- * Upload data to a Gaia hub
+ * Upload profile data to a Gaia hub
  * @gaiaHubUrl (string) the base scheme://host:port URL to the Gaia hub
  * @gaiaData (string) the data to upload
  * @privateKey (string) the private key to use to sign the challenge
  */
-function gaiaUpload(network: Object,
-                    gaiaHubURL: string, 
-                    gaiaPath: string,
-                    gaiaData: string,
-                    privateKey: string) {
+function gaiaUploadProfile(network: Object,
+                           gaiaHubURL: string, 
+                           gaiaPath: string,
+                           gaiaData: string,
+                           privateKey: string) {
   const ownerAddress = getPrivateKeyAddress(network, privateKey);
   const ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress); 
   return blockstack.connectToGaiaHub(gaiaHubURL, canonicalPrivateKey(privateKey))
@@ -2179,7 +2182,7 @@ function gaiaUpload(network: Object,
 }
 
 /*
- * Upload data to all Gaia hubs, given a zone file
+ * Upload profile data to all Gaia hubs, given a zone file
  * @network (object) the network to use
  * @gaiaUrls (array) list of Gaia URLs
  * @gaiaPath (string) the path to the file to store in Gaia
@@ -2187,7 +2190,7 @@ function gaiaUpload(network: Object,
  * @privateKey (string) the hex-encoded private key
  * @return a promise with {'dataUrls': [urls to the data]}, or {'error': ...}
  */
-function gaiaUploadAll(network: Object, gaiaUrls: Array<string>, gaiaPath: string, 
+function gaiaUploadProfileAll(network: Object, gaiaUrls: Array<string>, gaiaPath: string, 
   gaiaData: string, privateKey: string) : Promise<*> {
 
   const sanitizedGaiaUrls = gaiaUrls.map((gaiaUrl) => {
@@ -2204,7 +2207,7 @@ function gaiaUploadAll(network: Object, gaiaUrls: Array<string>, gaiaPath: strin
   .filter((gaiaUrl) => gaiaUrl.length > 0);
 
   const uploadPromises = sanitizedGaiaUrls.map((gaiaUrl) => 
-    gaiaUpload(network, gaiaUrl, gaiaPath, gaiaData, privateKey));
+    gaiaUploadProfile(network, gaiaUrl, gaiaPath, gaiaData, privateKey));
 
   return Promise.all(uploadPromises)
     .then((publicUrls) => {
@@ -2315,7 +2318,7 @@ function profileStore(network: Object, args: Array<string>) {
         throw new Error(`Name owner address either could not be found, or does not match ` +
           `private key address ${ownerAddress}`);
       }
-      return gaiaUploadAll(
+      return gaiaUploadProfileAll(
         network, [gaiaHubUrl], 'profile.json', signedProfileData, privateKey);
     })
     .then((gaiaUrls) => {
@@ -2346,6 +2349,21 @@ function zonefilePush(network: Object, args: Array<string>) {
     .then((result) => {
       return JSONStringify(result);
     });
+}
+
+/*
+ * Get the app private key(s) from a backup phrase and an ID-address
+ * args:
+ * @mnemonic (string) the 12-word phrase
+ * @idAddress (string) the ID-address
+ * @appOrigin (string) the application's origin URL
+ */
+function getAppKeys(network: Object, args: Array<string>) {
+  const mnemonic = args[0];
+  const idAddress = args[1];
+  const origin = args[2];
+  const appKeyInfo = getApplicationKeyInfo(mnemonic, idAddress, origin);
+  return Promise.resolve().then(() => JSONStringify(appKeyInfo));
 }
 
 /*
@@ -2390,7 +2408,6 @@ function getPaymentKey(network: Object, args: Array<string>) {
  */
 function makeKeychain(network: Object, args: Array<string>) {
   let mnemonic = args[0];
-  const STRENGTH = 128;   // 12 words
   if (!mnemonic) {
     mnemonic = bip39.generateMnemonic(STRENGTH, crypto.randomBytes);
   }
@@ -2728,11 +2745,184 @@ function getKeyAddress(network: Object, args: Array<string>) {
 }
 
 /*
+ * Set up a session for Gaia.
+ * Generate an authentication response like what the browser would do,
+ * and store the relevant data to our emulated localStorage.
+ */
+function makeGaiaSessionToken(appPrivateKey: string, hubURL: string | null) {  
+  const ownerPrivateKey = '24004db06ef6d26cdd2b0fa30b332a1b10fa0ba2b07e63505ffc2a9ed7df22b4';
+  const transitPrivateKey = 'f33fb466154023aba2003c17158985aa6603db68db0f1afc0fcf1d641ea6c2cb';
+  const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f19582124f4b07172eb61187afba4514828f866a8a223e0d5c539b2e38a59ab8bb3';
+
+  window.localStorage.setItem('blockstack-transit-private-key', transitPrivateKey)
+
+  const authResponse = blockstack.makeAuthResponse(
+    ownerPrivateKey,
+    {type: '@Person', accounts: []},
+    null,
+    {},
+    null,
+    appPrivateKey,
+    undefined,
+    transitPublicKey,
+    hubURL);
+
+  return authResponse;
+}
+
+/*
+ * Get a file from Gaia.
+ * args:
+ * @username (string) the blockstack ID of the user who owns the data
+ * @origin (string) the application origin
+ * @path (string) the file to read
+ * @appPrivateKey (string) OPTIONAL: the app private key to decrypt/verify with
+ * @verify (string) OPTIONAL: if '1' or 'true', then search for and verify a signature file
+ *  along with the data
+ */
+function gaiaGetFile(network: Object, args: Array<string>) {
+  const username = args[0];
+  const origin = args[1];
+  const path = args[2].replace(/^[\/]+/, '');
+  let appPrivateKey = null;
+  let decrypt = false;
+  let verify = false;
+
+  if (args.length > 3) {
+    appPrivateKey = args[3];
+    decrypt = true;
+  }
+
+  if (!!appPrivateKey && args.length > 4) {
+    verify = (args[4].toLowerCase() === 'true' || args[4].toLowerCase() === '1');
+  }
+
+  if (!appPrivateKey) {
+    // make a fake private key (it won't be used)
+    appPrivateKey = 'fda1afa3ff9ef25579edb5833b825ac29fae82d03db3f607db048aae018fe882';
+  }
+
+  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
+  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, null);
+  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+    .then((userData) => blockstack.getFile(path, {
+        decrypt: decrypt,
+        verify: verify,
+        app: origin,
+        username: username}))
+}
+
+/*
+ * Put a file into a Gaia hub
+ * args:
+ * @hubUrl (string) the URL to the write endpoint of the gaia hub
+ * @appPrivateKey (string) the private key used to authenticate to the gaia hub
+ * @dataPath (string) the path (on disk) to the data to store 
+ * @gaiaPath (string) the path (in Gaia) where the data will be stored
+ * @encrypt (string) OPTIONAL: if '1' or 'true', then encrypt the file
+ * @sign (string) OPTIONAL: if '1' or 'true', then sign the file and store the signature too.
+ */
+function gaiaPutFile(network: Object, args: Array<string>) {
+  const hubUrl = args[0];
+  const appPrivateKey = args[1];
+  const dataPath = args[2];
+  const gaiaPath = args[3];
+  let encrypt = false;
+  let sign = false;
+  
+  if (args.length > 4) {
+    encrypt = (args[4].toLowerCase() === 'true' || args[4].toLowerCase() === '1');
+  }
+  if (args.length > 5) {
+    sign = (args[5].toLowerCase() === 'true' || args[5].toLowerCase() === '1');
+  }
+  
+  const data = fs.readFileSync(dataPath);
+
+  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
+  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, hubUrl);
+  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+    .then((userData) => {
+      return blockstack.putFile(gaiaPath, data, { encrypt: encrypt, sign: sign });
+    })
+    .then((urls) => {
+      return JSONStringify({'urls': urls})
+    });
+}
+
+/*
+ * Go in a tail-recursion loop to list a Gaia hub's files
+ */
+function gaiaListFilesLoop(hubConfig: Object, page: string | null, 
+                           count: number, fileCount: number) {
+  if (count > 65536) {
+    // this is ridiculously huge 
+    throw new Error('Too many entries to list');
+  }
+
+  let httpStatus;
+  const pageRequest = JSON.stringify({ page: page });
+  return fetch(`${hubConfig.server}/list-files/${hubConfig.address}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': `${pageRequest.length}`,
+        'Authorization': `bearer ${hubConfig.token}`,
+      },
+      body: pageRequest
+    })
+    .then((response) => {
+      httpStatus = response.status;
+      return response.text();
+    })
+    .then((responseText) => JSON.parse(responseText))
+    .then((responseJSON) => {
+      const entries = responseJSON.entries;
+      const nextPage = responseJSON.page;
+      if (entries === null || entries === undefined) {
+        throw new Error('Malformed response: no entries');
+      }
+      for (let i = 0; i < entries.length; i++) {
+        console.log(entries[i]);
+      }
+      if (nextPage && entries.length > 0) {
+        // keep going 
+        return gaiaListFilesLoop(hubConfig, nextPage, count+1, fileCount + entries.length);
+      }
+      else {
+        return Promise.resolve(JSONStringify(fileCount));
+      }
+    });
+}
+
+/*
+ * List files in a Gaia hub
+ * args:
+ * @hubUrl (string) the URL to the write endpoint of the gaia hub
+ * @appPrivateKey (string) the private key used to authenticate to the gaia hub
+ */
+function gaiaListFiles(network: Object, args: Array<string>) {
+  const hubUrl = args[0];
+  const appPrivateKey = args[1];
+
+  const appAddress = getPrivateKeyAddress(network, appPrivateKey);
+  const appAddressMainnet = network.coerceMainnetAddress(appAddress); 
+  return blockstack.connectToGaiaHub(hubUrl, canonicalPrivateKey(appPrivateKey))
+    .then((hubConfig) => {
+      return gaiaListFilesLoop(hubConfig, null, 0, 0);
+    });
+}
+
+/*
  * Global set of commands
  */
 const COMMANDS = {
   'announce': announce,
   'balance': balance,
+  'gaia_getfile': gaiaGetFile,
+  'gaia_putfile': gaiaPutFile,
+  'gaia_listfiles': gaiaListFiles,
   'get_address': getKeyAddress,
   'get_account_at': getAccountAt,
   'get_account_history': getAccountHistory,
@@ -2740,6 +2930,7 @@ const COMMANDS = {
   'get_blockchain_history': getNameHistoryRecord,
   'get_confirmations': getConfirmations,
   'get_namespace_blockchain_record': getNamespaceBlockchainRecord,
+  'get_app_keys': getAppKeys,
   'get_owner_keys': getOwnerKeys,
   'get_payment_key': getPaymentKey,
   'get_zonefile': getNameZonefile,
