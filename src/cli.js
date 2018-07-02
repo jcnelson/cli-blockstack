@@ -9,6 +9,7 @@ const URL = require('url')
 const bip39 = require('bip39')
 const crypto = require('crypto')
 const ZoneFile = require('zone-file')
+const c32check = require('c32check')
 
 import {
   parseZoneFile
@@ -40,6 +41,7 @@ import {
   DEFAULT_CONFIG_TESTNET_PATH,
   ADDRESS_PATTERN,
   ID_ADDRESS_PATTERN,
+  STACKS_ADDRESS_PATTERN
 } from './argparse';
 
 import {
@@ -2396,8 +2398,9 @@ function getPaymentKey(network: Object, args: Array<string>) {
   const mnemonic = args[0];
   
   // keep the return value consistent with getOwnerKeys 
-  let keyInfo = [];
-  keyInfo.push(getPaymentKeyInfo(mnemonic));
+  const keyObj = getPaymentKeyInfo(mnemonic);
+  const keyInfo = [];
+  keyInfo.push(keyObj);
   return Promise.resolve().then(() => JSONStringify(keyInfo));
 }
 
@@ -2427,7 +2430,10 @@ function makeKeychain(network: Object, args: Array<string>) {
  * @address (string) the balances
  */
 function balance(network: Object, args: Array<string>) {
-  const address = args[0];
+  let address = args[0];
+  if (address.match(STACKS_ADDRESS_PATTERN)) {
+    address = c32check.c32ToB58(address);
+  }
 
   return Promise.resolve().then(() => {
     return network.getAccountTokens(address);
@@ -2483,7 +2489,7 @@ function balance(network: Object, args: Array<string>) {
  * @page (int) the page of the history to fetch
  */
 function getAccountHistory(network: Object, args: Array<string>) {
-  const address = args[0];
+  const address = c32check.c32ToB58(args[0]);
   const startBlockHeight = parseInt(args[1]);
   const endBlockHeight = parseInt(args[2]);
   const page = parseInt(args[3]);
@@ -2501,7 +2507,7 @@ function getAccountHistory(network: Object, args: Array<string>) {
  * @blockHeight (int) the height at which to query
  */
 function getAccountAt(network: Object, args: Array<string>) {
-  const address = args[0];
+  const address = c32check.c32ToB58(args[0]);
   const blockHeight = parseInt(args[1]);
 
   return Promise.resolve().then(() => {
@@ -2619,7 +2625,7 @@ function sendBTC(network: Object, args: Array<string>) {
  * @memo (string) OPTIONAL: a 34-byte memo to include
  */
 function sendTokens(network: Object, args: Array<string>) {
-  const recipientAddress = args[0];
+  const recipientAddress = c32check.c32ToB58(args[0]);
   const tokenType = args[1];
   const tokenAmount = bigi.fromByteArrayUnsigned(args[2]);
   const privateKey = decodePrivateKey(args[3]);
@@ -2735,13 +2741,17 @@ function getConfirmations(network: Object, args: Array<string>) {
 /*
  * Get the address of a private key 
  * args:
- * @private_key (string) the hex-encoded private key
+ * @private_key (string) the hex-encoded private key or key bundle
  */
 function getKeyAddress(network: Object, args: Array<string>) {
-  const privateKey = args[0];
-  return Promise.resolve().then(() =>
-    getPrivateKeyAddress(network, privateKey)
-  );
+  const privateKey = decodePrivateKey(args[0]);
+  return Promise.resolve().then(() => {
+    const addr = getPrivateKeyAddress(network, privateKey);
+    return JSONStringify({
+      'BTC': addr,
+      'STACKS': c32check.b58ToC32(addr),
+    });
+  });
 }
 
 /*
@@ -2804,6 +2814,9 @@ function gaiaGetFile(network: Object, args: Array<string>) {
 
   const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
   const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, null);
+
+  // force mainnet addresses 
+  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
   return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
     .then((userData) => blockstack.getFile(path, {
         decrypt: decrypt,
@@ -2826,7 +2839,7 @@ function gaiaPutFile(network: Object, args: Array<string>) {
   const hubUrl = args[0];
   const appPrivateKey = args[1];
   const dataPath = args[2];
-  const gaiaPath = args[3];
+  const gaiaPath = args[3].replace(/^\/+/, '');
   let encrypt = false;
   let sign = false;
   
@@ -2841,8 +2854,11 @@ function gaiaPutFile(network: Object, args: Array<string>) {
 
   const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
   const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, hubUrl);
+
+  // force mainnet addresses 
+  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
   return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
-    .then((userData) => {
+    .then((userData) => {      
       return blockstack.putFile(gaiaPath, data, { encrypt: encrypt, sign: sign });
     })
     .then((urls) => {
@@ -2906,12 +2922,39 @@ function gaiaListFiles(network: Object, args: Array<string>) {
   const hubUrl = args[0];
   const appPrivateKey = args[1];
 
-  const appAddress = getPrivateKeyAddress(network, appPrivateKey);
-  const appAddressMainnet = network.coerceMainnetAddress(appAddress); 
+  // force mainnet addresses 
+  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
   return blockstack.connectToGaiaHub(hubUrl, canonicalPrivateKey(appPrivateKey))
     .then((hubConfig) => {
       return gaiaListFilesLoop(hubConfig, null, 0, 0);
     });
+}
+
+/*
+ * Convert an address between mainnet and testnet, and between
+ * base58check and c32check.
+ * args:
+ * @address (string) the input address.  can be in any format
+ */
+function addressConvert(network: Object, args: Array<string>) {
+  const addr = args[0];
+  let hash160String;
+  let version;
+  let b58addr;
+  let c32addr;
+  if (addr.match(STACKS_ADDRESS_PATTERN)) {
+    c32addr = addr;
+    b58addr = c32check.c32ToB58(c32addr);
+  }
+  else if (addr.match(/[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+/)) {
+    c32addr = c32check.b58ToC32(addr);
+    b58addr = addr;
+  }
+  else {
+    throw new Error(`Unrecognized address ${addr}`);
+  }
+
+  return Promise.resolve().then(() => JSONStringify({STACKS: c32addr, BTC: b58addr}));
 }
 
 /*
@@ -2920,6 +2963,7 @@ function gaiaListFiles(network: Object, args: Array<string>) {
 const COMMANDS = {
   'announce': announce,
   'balance': balance,
+  'convert_address': addressConvert,
   'gaia_getfile': gaiaGetFile,
   'gaia_putfile': gaiaPutFile,
   'gaia_listfiles': gaiaListFiles,
@@ -3024,6 +3068,7 @@ export function CLIMain() {
         nodeAPIUrl ? nodeAPIUrl : configData.blockstackNodeUrl);
 
     blockstack.config.network = blockstackNetwork;
+    blockstack.config.logLevel = 'error';
 
     if (cmdArgs.command === 'help') {
       console.log(makeCommandUsageString(cmdArgs.args[0]));
