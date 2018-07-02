@@ -99,6 +99,7 @@
     "bitcoinjs-lib": "^3.3.0",
     "blockstack": "^18.0.0",
     "blockstack-keychains": "^0.0.8",
+    "c32check": "^0.0.6",
     "ecurve": "^1.0.6",
     "elliptic": "^6.4.0",
     "es6-promise": "^4.2.4",
