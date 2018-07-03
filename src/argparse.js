@@ -186,6 +186,12 @@ const CLI_ARGS = {
           pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
         },
         {
+          name: 'decrypt',
+          type: 'string',
+          realtype: 'boolean',
+          pattern: BOOLEAN_PATTERN,
+        },
+        {
           name: 'verify',
           type: 'string',
           realtype: 'boolean',
@@ -193,7 +199,7 @@ const CLI_ARGS = {
         },
       ],
       minItems: 3,
-      maxItems: 5,
+      maxItems: 6,
       help: 'Get a file from another user\'s Gaia hub.  Prints the file data to stdout.',
       group: 'Gaia',
     },
