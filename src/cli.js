@@ -2787,6 +2787,7 @@ function makeGaiaSessionToken(appPrivateKey: string, hubURL: string | null) {
  * @origin (string) the application origin
  * @path (string) the file to read
  * @appPrivateKey (string) OPTIONAL: the app private key to decrypt/verify with
+ * @decrypt (string) OPTINOAL: if '1' or 'true', then decrypt
  * @verify (string) OPTIONAL: if '1' or 'true', then search for and verify a signature file
  *  along with the data
  */
@@ -2794,17 +2795,16 @@ function gaiaGetFile(network: Object, args: Array<string>) {
   const username = args[0];
   const origin = args[1];
   const path = args[2].replace(/^[\/]+/, '');
-  let appPrivateKey = null;
+  let appPrivateKey = args[3];
   let decrypt = false;
   let verify = false;
 
-  if (args.length > 3) {
-    appPrivateKey = args[3];
-    decrypt = true;
+  if (!!appPrivateKey && args.length > 4) {
+    decrypt = (args[4].toLowerCase() === 'true' || args[4].toLowerCase() === '1');
   }
 
-  if (!!appPrivateKey && args.length > 4) {
-    verify = (args[4].toLowerCase() === 'true' || args[4].toLowerCase() === '1');
+  if (!!appPrivateKey && args.length > 5) {
+    verify = (args[5].toLowerCase() === 'true' || args[5].toLowerCase() === '1');
   }
 
   if (!appPrivateKey) {
@@ -2823,6 +2823,14 @@ function gaiaGetFile(network: Object, args: Array<string>) {
         verify: verify,
         app: origin,
         username: username}))
+    .then((data) => {
+      if (data instanceof ArrayBuffer) {
+        return Buffer.from(data);
+      }
+      else {
+        return data;
+      }
+    })
 }
 
 /*
@@ -3092,7 +3100,14 @@ export function CLIMain() {
         return result;
       }
     })
-    .then((result) => console.log(result))
+    .then((result) => {
+      if (result instanceof Buffer) {
+        process.stdout.write(result);
+      }
+      else {
+        console.log(result);
+      }
+    })
     .then(() => process.exit(exitcode))
     .catch((e) => {
        console.error(e.stack);
