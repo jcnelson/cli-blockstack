@@ -373,3 +373,49 @@ export function checkUrl(url: string) : string {
 
   return url;
 }
+
+/*
+ * Connect to Gaia hub.  Make sure we use a mainnet address always, even in test mode
+ * (works around a bug in some versions of blockstack.js)
+ */
+export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: string) {
+  const addressMainnet = network.coerceMainnetAddress(
+    getPrivateKeyAddress(network, `${canonicalPrivateKey(privateKey)}01`))
+  const addressMainnetCanonical = network.coerceMainnetAddress(
+    getPrivateKeyAddress(network, canonicalPrivateKey(privateKey)))
+
+  return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(privateKey))
+    .then((hubConfig) => {
+      if (network.coerceMainnetAddress(hubConfig.address) === addressMainnet) {
+        hubConfig.address = addressMainnet;
+      }
+      else if (network.coerceMainnetAddress(hubConfig.address) === addressMainnetCanonical) {
+        hubConfig.address = addressMainnetCanonical;
+      }
+      else {
+        throw new Error('Invalid private key: ' +
+          `${network.coerceMainnetAddress(hubConfig.address)} is neither ` +
+          `${addressMainnet} or ${addressMainnetCanonical}`);
+      }
+
+      /*
+      if (network.coerceMainnetAddress(hubConfig.address) !== addressMainnet) {
+        throw new Error('Invalid private key: ' +
+          `${network.coerceMainnetAddress(hubConfig.address)} != ${addressMainnet}`);
+      }
+      // this fixes a bug in some versions of blockstack.js
+      hubConfig.address = addressMainnet;
+      */
+      return hubConfig;
+    });
+}
+
+/*
+ * Sign a profile into a JWT
+ */
+export function makeProfileJWT(profileData: Object, privateKey: string) : string {
+    const signedToken = blockstack.signProfileToken(profileData, privateKey);
+    const wrappedToken = blockstack.wrapProfileToken(signedToken);
+    const tokenRecords = [wrappedToken];
+    return JSONStringify(tokenRecords);
+}
