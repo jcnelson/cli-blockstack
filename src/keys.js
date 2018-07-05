@@ -243,6 +243,7 @@ export function deriveIdentityKeyPair(identityOwnerAddressNode: Object) {
 
 /*
  * Get the owner key information for a 12-word phrase, at a specific index.
+ * @network (object) the blockstack network
  * @mnemonic (string) the 12-word phrase
  * @index (number) the account index
  * @version (string) the derivation version string
@@ -252,10 +253,10 @@ export function deriveIdentityKeyPair(identityOwnerAddressNode: Object) {
  *    .version (string) the version string of the derivation
  *    .idAddress (string) the ID-address
  */
-export function getOwnerKeyInfo(mnemonic : string, 
+export function getOwnerKeyInfo(network: Object,
+                                mnemonic : string, 
                                 index : number, 
                                 version : string = 'v0.10-current') {
-  const network = blockstack.config.network;
   const identity = getIdentityNodeFromPhrase(mnemonic, index, version);
   const addr = network.coerceAddress(toAddress(identity));
   const privkey = toPrivkeyHex(identity);
@@ -269,14 +270,14 @@ export function getOwnerKeyInfo(mnemonic : string,
 
 /*
  * Get the payment key information for a 12-word phrase.
+ * @network (object) the blockstack network
  * @mnemonic (string) the 12-word phrase
  * 
  * Returns an object with:
  *    .privateKey (string) the hex private key
  *    .address (string) the address of the private key
  */
-export function getPaymentKeyInfo(mnemonic : string) {
-  const network = blockstack.config.network;
+export function getPaymentKeyInfo(network: Object, mnemonic : string) {
   const identity = getIdentityNodeFromPhrase(mnemonic, 0, 'current-btc');
   const addr = network.coerceAddress(identity.keyPair.getAddress());
   const privkey = identity.keyPair.d.toHex() + '01';
@@ -295,14 +296,13 @@ export function getPaymentKeyInfo(mnemonic : string) {
  * Returns the index if found
  * Returns -1 if not found
  */
-export function findIdentityIndex(mnemonic: string, idAddress: string, maxIndex: ?number = 32) {
+export function findIdentityIndex(network: Object, mnemonic: string, idAddress: string, maxIndex: ?number = 16) {
   if (!maxIndex) {
     maxIndex = 16;
   }
 
-  const network = blockstack.config.network;
   if (idAddress.substring(0,3) !== 'ID-') {
-    throw new Error('Not an identity address')
+    throw new Error('Not an identity address');
   }
 
   for (let i = 0; i < maxIndex; i++) {
@@ -318,6 +318,7 @@ export function findIdentityIndex(mnemonic: string, idAddress: string, maxIndex:
 
 /*
  * Get the Gaia application key from a 12-word phrase
+ * @network (object) the blockstack network
  * @mmemonic (string) the 12-word phrase
  * @idAddress (string) the ID-address used to sign in
  * @appDomain (string) the application's Origin
@@ -330,9 +331,8 @@ export function findIdentityIndex(mnemonic: string, idAddress: string, maxIndex:
  *      .privateKey (string) the app's hex private key
  *      .address (string) the address of the private key
  */
-export function getApplicationKeyInfo(mnemonic : string, idAddress: string, appDomain: string) {
-  const network = blockstack.config.network;
-  const idIndex = findIdentityIndex(mnemonic, idAddress);
+export function getApplicationKeyInfo(network: Object, mnemonic : string, idAddress: string, appDomain: string) {
+  const idIndex = findIdentityIndex(network, mnemonic, idAddress);
   if (idIndex < 0) {
     throw new Error('Identity address does not belong to this keychain');
   }
@@ -357,7 +357,8 @@ export function getApplicationKeyInfo(mnemonic : string, idAddress: string, appD
     legacyKeyInfo: {
       privateKey: appPrivateKey,
       address: getPrivateKeyAddress(network, `${appPrivateKey}01`)
-    }
+    },
+    ownerKeyIndex: idIndex
   };
   return res;
 }
