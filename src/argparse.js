@@ -270,6 +270,44 @@ const CLI_ARGS = {
       help: 'List all the files in a Gaia hub, authenticating with the given app private key.',
       group: 'Gaia',
     },
+    gaia_sethub: {
+      type: "array",
+      items: [
+        {
+          name: 'blockstack_id',
+          type: 'string',
+          realtype: 'blockstack_id',
+          pattern: `^${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+        },
+        {
+          name: 'owner_gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_origin',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'backup_phrase',
+          type: 'string',
+          realtype: 'backup_phrase',
+        },
+      ],
+      minItems: 5,
+      maxItems: 5,
+      help: 'Set the Gaia hub for a particular application for a Blockstack ID.',
+      group: 'Gaia',
+    },
     get_account_history: {
       type: "array",
       items: [
