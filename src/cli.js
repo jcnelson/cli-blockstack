@@ -19,7 +19,6 @@ import {
   getOwnerKeyInfo,
   getPaymentKeyInfo,
   getApplicationKeyInfo,
-  findIdentityIndex,
   STRENGTH,
 } from './keys';
 
@@ -59,7 +58,9 @@ import {
   sumUTXOs,
   hash160,
   checkUrl,
-  decodePrivateKey
+  decodePrivateKey,
+  gaiaConnect,
+  makeProfileJWT
 } from './utils';
 
 // global CLI options
@@ -1804,12 +1805,7 @@ function register(network: Object, args: Array<string>) {
   .then((txResult) => {
     // sign and upload profile
     broadcastResult = txResult;
-
-    const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
-    const wrappedToken = blockstack.wrapProfileToken(signedToken);
-    const tokenRecords = [wrappedToken];
-    const signedProfileData = JSONStringify(tokenRecords);
-
+    const signedProfileData = makeProfileJWT(emptyProfile, ownerKey);
     return gaiaUploadProfileAll(
       network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
   })
@@ -2009,11 +2005,7 @@ function registerSubdomain(network: Object, args: Array<string>) {
 
   const profileUploadPromise = Promise.resolve().then(() => {
       // sign and upload profile
-      const signedToken = blockstack.signProfileToken(emptyProfile, ownerKey);
-      const wrappedToken = blockstack.wrapProfileToken(signedToken);
-      const tokenRecords = [wrappedToken];
-      const signedProfileData = JSONStringify(tokenRecords);
-
+      const signedProfileData = makeProfileJWT(emptyProfile, ownerKey);
       return gaiaUploadProfileAll(
         network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
     })
@@ -2113,12 +2105,7 @@ function profileSign(network: Object, args: Array<string>) {
   const profilePath = args[0];
   const privateKey = decodePrivateKey(args[1]);
   const profileData = JSON.parse(fs.readFileSync(profilePath).toString());
-  return Promise.resolve().then(() => {
-    const signedToken = blockstack.signProfileToken(profileData, privateKey);
-    const wrappedToken = blockstack.wrapProfileToken(signedToken);
-    const tokenRecords = [wrappedToken];
-    return JSONStringify(tokenRecords);
-  });
+  return Promise.resolve().then(() => makeProfileJWT(profileData, privateKey));
 }
 
 /*
@@ -2169,16 +2156,8 @@ function gaiaUploadProfile(network: Object,
                            gaiaPath: string,
                            gaiaData: string,
                            privateKey: string) {
-  const ownerAddress = getPrivateKeyAddress(network, privateKey);
-  const ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress); 
-  return blockstack.connectToGaiaHub(gaiaHubURL, canonicalPrivateKey(privateKey))
+  return gaiaConnect(network, gaiaHubURL, privateKey)
     .then((hubConfig) => {
-      if (network.coerceMainnetAddress(hubConfig.address) !== ownerAddressMainnet) {
-        throw new Error('Invalid private key: ' +
-          `${network.coerceMainnetAddress(hubConfig.address)} != ${ownerAddressMainnet}`);
-      }
-      // this fixes a bug in some versions of blockstack.js
-      hubConfig.address = ownerAddressMainnet;
       return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
     });
 }
@@ -2234,42 +2213,28 @@ function makeZonefileFromGaiaUrl(network: Object, name: string,
   const address = getPrivateKeyAddress(network, ownerKey);
   const mainnetAddress = network.coerceMainnetAddress(address)
 
-  const zonefilePromise = Promise.resolve().then(() => {
-    return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(ownerKey));
-  })
-  .then((hubConfig) => {
-    // this fixes a bug in some versions of blockstack.js
-    if (hubConfig.address !== mainnetAddress && hubConfig.address !== address) {
-      throw new Error(`Invalid private key: ${hubConfig.address} != ${mainnetAddress}`);
-    }
-    if (!hubConfig.url_prefix) {
-      throw new Error('Invalid hub config: no read_url_prefix defined');
-    }
-    return hubConfig.url_prefix;
-  })
-  .then((gaiaReadUrl) => {
-    gaiaReadUrl = gaiaReadUrl.replace(/\/+$/, "");
-    const profileUrl = `${gaiaReadUrl}/${mainnetAddress}/profile.json`;
-    try {
-      checkUrl(profileUrl);
-      return profileUrl;
-    }
-    catch(e) {
-      throw new SafetyError({
-        'status': false,
-        'error': e.message,
-        'hints': [
-          'Make sure the Gaia hub read URL scheme is present and well-formed.',
-          `Check the "read_url_prefix" field of ${gaiaHubUrl}/hub_info`
-        ],
-      });
-    }
-  })
-  .then((profileUrl) => {
-    return blockstack.makeProfileZoneFile(name, profileUrl);
-  });
-
-  return zonefilePromise;
+  return gaiaConnect(network, gaiaHubUrl, ownerKey)
+    .then((hubConfig) => {
+      if (!hubConfig.url_prefix) {
+        throw new Error('Invalid hub config: no read_url_prefix defined');
+      }
+      const gaiaReadUrl = hubConfig.url_prefix.replace(/\/+$/, "");
+      const profileUrl = `${gaiaReadUrl}/${mainnetAddress}/profile.json`;
+      try {
+        checkUrl(profileUrl);
+      }
+      catch(e) {
+        throw new SafetyError({
+          'status': false,
+          'error': e.message,
+          'hints': [
+            'Make sure the Gaia hub read URL scheme is present and well-formed.',
+            `Check the "read_url_prefix" field of ${gaiaHubUrl}/hub_info`
+          ],
+        });
+      }
+      return blockstack.makeProfileZoneFile(name, profileUrl);
+    });
 }
 
 /*
@@ -2364,7 +2329,7 @@ function getAppKeys(network: Object, args: Array<string>) {
   const mnemonic = args[0];
   const idAddress = args[1];
   const origin = args[2];
-  const appKeyInfo = getApplicationKeyInfo(mnemonic, idAddress, origin);
+  const appKeyInfo = getApplicationKeyInfo(network, mnemonic, idAddress, origin);
   return Promise.resolve().then(() => JSONStringify(appKeyInfo));
 }
 
@@ -2383,7 +2348,7 @@ function getOwnerKeys(network: Object, args: Array<string>) {
 
   let keyInfo = [];
   for (let i = 0; i < maxIndex; i++) {
-    keyInfo.push(getOwnerKeyInfo(mnemonic, i));
+    keyInfo.push(getOwnerKeyInfo(network, mnemonic, i));
   }
   
   return Promise.resolve().then(() => JSONStringify(keyInfo));
@@ -2398,7 +2363,7 @@ function getPaymentKey(network: Object, args: Array<string>) {
   const mnemonic = args[0];
   
   // keep the return value consistent with getOwnerKeys 
-  const keyObj = getPaymentKeyInfo(mnemonic);
+  const keyObj = getPaymentKeyInfo(network, mnemonic);
   const keyInfo = [];
   keyInfo.push(keyObj);
   return Promise.resolve().then(() => JSONStringify(keyInfo));
@@ -2415,8 +2380,8 @@ function makeKeychain(network: Object, args: Array<string>) {
     mnemonic = bip39.generateMnemonic(STRENGTH, crypto.randomBytes);
   }
 
-  const ownerKeyInfo = getOwnerKeyInfo(mnemonic, 0);
-  const paymentKeyInfo = getPaymentKeyInfo(mnemonic);
+  const ownerKeyInfo = getOwnerKeyInfo(network, mnemonic, 0);
+  const paymentKeyInfo = getPaymentKeyInfo(network, mnemonic);
   return Promise.resolve().then(() => JSONStringify({
     'mnemonic': mnemonic,
     'ownerKeyInfo': ownerKeyInfo,
@@ -2939,6 +2904,108 @@ function gaiaListFiles(network: Object, args: Array<string>) {
 }
 
 /*
+ * Set the Gaia hub for an application for a blockstack ID
+ * args:
+ * @blockstackID (string) the blockstack ID of the user
+ * @profileHubUrl (string) the URL to the write endpoint of the user's profile gaia hub
+ * @appOrigin (string) the application's Origin
+ * @hubUrl (string) the URL to the write endpoint of the app's gaia hub
+ * @mnemonic (string) the 12-word backup phrase
+ */
+function gaiaSetHub(network: Object, args: Array<string>) {
+  network.setCoerceMainnetAddress(true);
+
+  const blockstackID = args[0];
+  const ownerHubUrl = args[1];
+  const appOrigin = args[2];
+  const hubUrl = args[3];
+  const mnemonic = args[4];
+
+  const nameInfoPromise = getNameInfo(network, blockstackID)
+    .then((nameInfo) => {
+      if (!nameInfo) {
+        throw new Error('Name not found');
+      }
+      return nameInfo;
+    });
+
+  const profilePromise = blockstack.lookupProfile(blockstackID);
+
+  let profile;
+  let ownerPrivateKey;
+  let appAddress;
+
+  return Promise.all([nameInfoPromise, profilePromise])
+    .then(([nameInfo, nameProfile]) => {
+      if (!nameProfile) {
+        throw new Error("No profile found");
+      }
+      if (!nameInfo) {
+        throw new Error('Name not found');
+      }
+      if (!nameInfo.zonefile) {
+        throw new Error('No zone file found');
+      }
+
+      const parsedZoneFile = parseZoneFile(nameInfo.zonefile);
+      if (!parsedZoneFile.uri) {
+        throw new Error('No URI records in name zone file');
+      }
+
+      // get owner ID-address
+      const ownerAddress = network.coerceMainnetAddress(nameInfo.address);
+      const idAddress = `ID-${ownerAddress}`;
+      
+      // get owner and app key info 
+      const appKeyInfo = getApplicationKeyInfo(network, mnemonic, idAddress, appOrigin);
+      const ownerKeyInfo = getOwnerKeyInfo(network, mnemonic, appKeyInfo.ownerKeyIndex);
+     
+      let appPrivateKey = (appKeyInfo.keyInfo.privateKey === 'TODO' || !appKeyInfo.keyInfo.privateKey ?
+                           appKeyInfo.legacyKeyInfo.privateKey :
+                           appKeyInfo.keyInfo.privateKey);
+
+      appPrivateKey = `${canonicalPrivateKey(appPrivateKey)}01`;
+      appAddress = network.coerceMainnetAddress(getPrivateKeyAddress(network, appPrivateKey));
+
+      profile = nameProfile;
+      ownerPrivateKey = ownerKeyInfo.privateKey;
+      
+      const ownerGaiaHubPromise = gaiaConnect(network, ownerHubUrl, ownerPrivateKey);
+      const appGaiaHubPromise = gaiaConnect(network, hubUrl, appPrivateKey);
+
+      return Promise.all([ownerGaiaHubPromise, appGaiaHubPromise]);
+    })
+    .then(([ownerHubConfig, appHubConfig]) => {
+      if (!ownerHubConfig.url_prefix) {
+        throw new Error('Invalid owner hub config: no url_prefix defined');
+      }
+
+      if (!appHubConfig.url_prefix) {
+        throw new Error('Invalid app hub config: no url_prefix defined');
+      }
+
+      const gaiaReadUrl = appHubConfig.url_prefix.replace(/\/+$/, '');
+
+      const newAppEntry = {};
+      newAppEntry[appOrigin] = `${gaiaReadUrl}/${appAddress}/`;
+
+      const apps = Object.assign({}, profile.apps ? profile.apps : {}, newAppEntry)
+      profile.apps = apps;
+
+      // sign the new profile
+      const signedProfile = makeProfileJWT(profile, ownerPrivateKey); 
+      return gaiaUploadProfileAll(
+        network, [ownerHubUrl], 'profile.json', signedProfile, ownerPrivateKey);
+    })
+    .then((profileUrls) => {
+      return JSONStringify({
+        'profileUrls': profileUrls
+      });
+    });
+}
+      
+      
+/*
  * Convert an address between mainnet and testnet, and between
  * base58check and c32check.
  * args:
@@ -2975,6 +3042,7 @@ const COMMANDS = {
   'gaia_getfile': gaiaGetFile,
   'gaia_putfile': gaiaPutFile,
   'gaia_listfiles': gaiaListFiles,
+  'gaia_sethub': gaiaSetHub,
   'get_address': getKeyAddress,
   'get_account_at': getAccountAt,
   'get_account_history': getAccountHistory,
