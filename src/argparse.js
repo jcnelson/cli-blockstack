@@ -126,6 +126,35 @@ const CLI_ARGS = {
       '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n',
       group: 'Peer Services'
     },
+    auth: {
+      type: "array",
+      items: [
+        {
+          name: 'port',
+          type: 'string',
+          realtype: 'portnum',
+          pattern: '^[0-9]+',
+        },
+        {
+          name: 'gaiaHub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'backup_phrase',
+          type: 'string',
+          realtype: 'backup_phrase',
+          pattern: '.+',
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: 'Run an authentication endpoint on the given port for the set of names owned ' +
+      'by the given backup phrase.  Send authenticators the given Gaia hub URL in the auth ' +
+      'response.',
+      group: 'Authentication',
+    },
     balance: {
       type: "array",
       items: [ 
