@@ -331,10 +331,20 @@ export function findIdentityIndex(network: Object, mnemonic: string, idAddress: 
  *      .privateKey (string) the app's hex private key
  *      .address (string) the address of the private key
  */
-export function getApplicationKeyInfo(network: Object, mnemonic : string, idAddress: string, appDomain: string) {
-  const idIndex = findIdentityIndex(network, mnemonic, idAddress);
+export function getApplicationKeyInfo(network: Object,
+                                      mnemonic : string, 
+                                      idAddress: string, 
+                                      appDomain: string, 
+                                      idIndex: ?number) {
+  if (!idIndex) {
+    idIndex = -1;
+  }
+
   if (idIndex < 0) {
-    throw new Error('Identity address does not belong to this keychain');
+    idIndex = findIdentityIndex(network, mnemonic, idAddress);
+    if (idIndex < 0) {
+      throw new Error('Identity address does not belong to this keychain');
+    }
   }
 
   const masterKeychain = getMaster(mnemonic);
