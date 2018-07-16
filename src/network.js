@@ -154,10 +154,36 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
   getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
     return super.getNamePrice(fullyQualifiedName)
+      .then((namePrice) => {
+        // might be a number, in which case, this is BTC 
+        if (typeof namePrice === 'number') {
+          const result = {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(namePrice))
+          };
+          return result;
+        }
+        else {
+          return namePrice;
+        }
+      });
   }
 
   getNamespacePriceV2(namespaceID: string) : Promise<*> {
     return super.getNamespacePrice(namespaceID)
+      .then((namespacePrice) => {
+        // might be a number, in which case, this is BTC 
+        if (typeof namespacePrice === 'number') {
+          const result = {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(namespacePrice))
+          };
+          return result;
+        }
+        else {
+          return namespacePrice;
+        }
+      });
   }
 
   getNamePriceCompat(fullyQualifiedName: string) : Promise<*> {
