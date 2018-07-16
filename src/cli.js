@@ -10,6 +10,8 @@ const bip39 = require('bip39')
 const crypto = require('crypto')
 const ZoneFile = require('zone-file')
 const c32check = require('c32check')
+const express = require('express')
+const jsontokens = require('jsontokens')
 
 import {
   parseZoneFile
@@ -21,11 +23,6 @@ import {
   getApplicationKeyInfo,
   STRENGTH,
 } from './keys';
-
-const Promise = require('bluebird');
-Promise.onPossiblyUnhandledRejection(function(error){
-    throw error;
-});
 
 import {
   getCLIOpts,
@@ -63,12 +60,18 @@ import {
   makeProfileJWT
 } from './utils';
 
+import {
+  type NamedIdentityType,
+  makeAuthPage
+} from './data';
+
 // global CLI options
 let txOnly = false;
 let estimateOnly = false;
 let safetyChecks = true;
 let receiveFeesPeriod = 52595;
 let gracePeriod = 5000;
+let noExit = false;
 
 let BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
 
@@ -203,9 +206,23 @@ function lookup(network: Object, args: Array<string>) {
           error: `Name is expired at block ${nameInfo.expire_block} and must be renewed by block ${nameInfo.renewal_deadline}`
         });
       }
+
+      let profileUrl = null;
+      try {
+        const zonefileJSON = parseZoneFile(zonefile);
+        if (zonefileJSON.uri && zonefileJSON.hasOwnProperty('$origin')) {
+          profileUrl = blockstack.getTokenFileUrl(zonefileJSON);
+        }
+      }
+      catch(e) {
+        console.log(e);
+        ;
+      }
+
       const ret = {
         zonefile: zonefile,
-        profile: profile
+        profile: profile,
+        profileUrl: profileUrl
       };
       return JSONStringify(ret);
     });
@@ -1706,7 +1723,7 @@ function announce(network: Object, args: Array<string>) {
  * @arg name (string) the name to register
  * @arg ownerKey (string) the hex-encoded owner private key (must be singlesig)
  * @arg paymentKey (string) the hex-encoded payment key to purchase this name
- * @arg gaiaHubUrl (string) the gaia hub URL to use
+ * @arg gaiaHubUrl (string) the write endpoint of the gaia hub URL to use
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
  *  supercedes gaiaHubUrl
  */
@@ -1964,7 +1981,7 @@ function registerAddr(network: Object, args: Array<string>) {
  * zone file and signed subdomain records to the subdomain registrar.
  * @arg name (string) the name to register
  * @arg ownerKey (string) the hex-encoded owner private key (must be single-sig)
- * @arg gaiaHubUrl (string) the gaia hub URL to use
+ * @arg gaiaHubUrl (string) the write endpoint of the gaia hub URL to use
  * @arg registrarUrl (string) OPTIONAL the registrar URL
  * @arg zonefile (string) OPTIONAL the path to the zone file to give this name.
  *  supercedes gaiaHubUrl
@@ -2011,12 +2028,10 @@ function registerSubdomain(network: Object, args: Array<string>) {
     })
     .then((gaiaUrls) => {
       if (gaiaUrls.hasOwnProperty('error')) {
-        return JSONStringify(gaiaUrls, true);
+        return { profileUrls: null, error: gaiaUrls.error };
       }
       else {
-        return JSONStringify({
-          'profileUrls': gaiaUrls.dataUrls, 
-        });
+        return { profileUrls: gaiaUrls.dataUrls };
       }
     });
 
@@ -2084,10 +2099,17 @@ function registerSubdomain(network: Object, args: Array<string>) {
 
       return Promise.all([registerPromise, profileUploadPromise])
         .then(([registerInfo, profileUploadInfo]) => {
-          return JSONStringify({
-            'txInfo': registerInfo,
-            'profileUrls': profileUploadInfo.profileUrls,
-          });
+          if (!profileUploadInfo.error) {
+            return JSONStringify({
+              'txInfo': registerInfo,
+              'profileUrls': profileUploadInfo.profileUrls,
+            });
+          }
+          else {
+            return JSONStringify({
+              'error': profileUploadInfo.error
+            }, true);
+          }
         });
     }
     else {
@@ -2192,7 +2214,10 @@ function gaiaUploadProfileAll(network: Object, gaiaUrls: Array<string>, gaiaPath
 
   return Promise.all(uploadPromises)
     .then((publicUrls) => {
-      return { 'dataUrls': publicUrls };
+      return { error: null, dataUrls: publicUrls };
+    })
+    .catch((e) => {
+      return { error: `Failed to upload: ${e.message}`, dataUrls: null };
     });
 }
 
@@ -2843,7 +2868,7 @@ function gaiaPutFile(network: Object, args: Array<string>) {
  * Go in a tail-recursion loop to list a Gaia hub's files
  */
 function gaiaListFilesLoop(hubConfig: Object, page: string | null, 
-                           count: number, fileCount: number) {
+                           count: number, fileCount: number, callback: (name: string) => boolean) {
   if (count > 65536) {
     // this is ridiculously huge 
     throw new Error('Too many entries to list');
@@ -2873,11 +2898,12 @@ function gaiaListFilesLoop(hubConfig: Object, page: string | null,
         throw new Error('Malformed response: no entries');
       }
       for (let i = 0; i < entries.length; i++) {
-        console.log(entries[i]);
+        callback(entries[i]);
       }
       if (nextPage && entries.length > 0) {
         // keep going 
-        return gaiaListFilesLoop(hubConfig, nextPage, count+1, fileCount + entries.length);
+        return gaiaListFilesLoop(hubConfig, nextPage, count+1,
+            fileCount + entries.length, callback);
       }
       else {
         return Promise.resolve(JSONStringify(fileCount));
@@ -2899,7 +2925,10 @@ function gaiaListFiles(network: Object, args: Array<string>) {
   blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
   return blockstack.connectToGaiaHub(hubUrl, canonicalPrivateKey(appPrivateKey))
     .then((hubConfig) => {
-      return gaiaListFilesLoop(hubConfig, null, 0, 0);
+      return gaiaListFilesLoop(hubConfig, null, 0, 0, (name) => {
+        console.log(name);
+        return true;
+      });
     });
 }
 
@@ -2945,11 +2974,6 @@ function gaiaSetHub(network: Object, args: Array<string>) {
       }
       if (!nameInfo.zonefile) {
         throw new Error('No zone file found');
-      }
-
-      const parsedZoneFile = parseZoneFile(nameInfo.zonefile);
-      if (!parsedZoneFile.uri) {
-        throw new Error('No URI records in name zone file');
       }
 
       // get owner ID-address
@@ -3033,9 +3057,356 @@ function addressConvert(network: Object, args: Array<string>) {
 }
 
 /*
+ * Find all identity addresses that have names attached to them.
+ */
+function loadNamedIdentitiesLoop(network: Object, 
+                                 mnemonic: string, 
+                                 index: number, 
+                                 identities: Array<NamedIdentityType>) {
+  const ret = [];
+
+  // 65536 is a ridiculously huge number
+  const keyInfo = getOwnerKeyInfo(network, mnemonic, index);
+  return network.getNamesOwned(keyInfo.idAddress.slice(3))
+    .then((nameList) => {
+      if (nameList.length === 0) {
+        // out of names 
+        return identities;
+      }
+      for (let i = 0; i < nameList.length; i++) {
+        identities.push({
+          name: nameList[i],
+          idAddress: keyInfo.idAddress,
+          privateKey: keyInfo.privateKey,
+          index: index,
+          profile: null,
+          profileUrl: '',
+          gaiaConnection: undefined
+        });
+      }
+      return loadNamedIdentitiesLoop(network, mnemonic, index + 1, identities);
+    });
+}
+
+function loadNamedIdentities(network: Object, mnemonic: string) {
+  return loadNamedIdentitiesLoop(network, mnemonic, 0, []);
+}
+
+/*
+ * Send a JSON HTTP response
+ */
+function sendJSON(res: express.response, data: Object, statusCode: number) {
+  res.writeHead(statusCode, {'Content-Type' : 'application/json'})
+  res.write(JSON.stringify(data))
+  res.end()
+}
+
+/*
+ * Get all of a 12-word phrase's identities, profiles, and Gaia connections
+ */
+function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: string) 
+  : Promise<Array<NamedIdentityType>> {
+
+  let identities = [];
+  let gaiaConnections = [];
+  network.setCoerceMainnetAddress(true);    // for lookups in regtest
+  
+  // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
+  const identitiesPromise = loadNamedIdentities(network, mnemonic)
+    .then((ids) => {
+      const profilePromises = [];
+      for (let i = 0; i < ids.length; i++) {
+        const profilePromise = lookup(network, [ids[i].name])
+          .then((profileJSON) => JSON.parse(profileJSON))
+          .catch(() => null);
+
+        profilePromises.push(profilePromise);
+      }
+
+      identities = ids;
+      return Promise.all(profilePromises);
+    })
+    .then((profileDatas) => {
+      network.setCoerceMainnetAddress(false);
+
+      for (let i = 0; i < profileDatas.length; i++) {
+        identities[i].profile = profileDatas[i].profile;
+        identities[i].zonefile = profileDatas[i].zonefile;
+        identities[i].profileUrl = profileDatas[i].profileUrl;
+      }
+      return identities;
+    })
+    .then((ids) => {
+      // connect to all Gaia hubs
+      const gaiaConnectionPromises = [];
+      for (let i = 0; i < ids.length; i++) {
+        const gaiaPromise = gaiaConnect(network, gaiaHubUrl, ids[i].privateKey);
+        gaiaConnectionPromises.push(gaiaPromise);
+      }
+
+      return Promise.all(gaiaConnectionPromises);
+    })
+    .then((connections) => {
+      network.setCoerceMainnetAddress(false);
+      gaiaConnections = connections;
+
+      for (let i = 0; i < connections.length; i++) {
+        identities[i].gaiaConnection = connections[i];
+      }
+
+      return identities;
+    });
+
+  return identitiesPromise;
+}
+
+
+/*
+ * Handle GET /auth?authRequest=...
+ * If the authRequest is verifiable and well-formed, and if we can fetch the application
+ * manifest, then we can render an auth page to the user.
+ * Serves back the sign-in page on success.
+ * Serves back an error page on error.
+ * Returns a Promise that resolves to nothing.
+ */
+function handleAuth(network: Object, identities: Array<NamedIdentityType>,
+                    mnemonic: string, gaiaHubUrl: string, port: number, 
+                    req: express.request, res: express.response) : Promise<*> {
+
+  const authToken = req.query.authRequest;
+  if (!authToken) {
+     return Promise.resolve().then(() => {
+       sendJSON(res, { error: 'No authRequest given' }, 400);
+     });
+  }
+ 
+  let errorMsg;
+  return Promise.resolve().then(() => {
+      errorMsg = 'Unable to verify authentication token';
+      return blockstack.verifyAuthRequest(authToken);
+    })
+    .then((valid) => {
+      if (!valid) {
+        errorMsg = 'Invalid authentication token: could not verify';
+        throw new Error(errorMsg);
+      }
+      errorMsg = 'Unable to fetch app manifest';
+      return blockstack.fetchAppManifest(authToken);
+    })
+    .then((appManifest) => {
+      const decodedAuthToken = jsontokens.decodeToken(authToken);
+      const decodedAuthPayload = decodedAuthToken.payload;
+      if (!decodedAuthPayload) {
+        errorMsg = 'Invalid authentication token: no payload';
+        throw new Error(errorMsg);
+      }
+
+      // make sign-in page
+      const authPage = makeAuthPage(
+        network, port, mnemonic, gaiaHubUrl, appManifest, decodedAuthPayload, identities);
+
+      res.writeHead(200, {'Content-Type': 'text/html', 'Content-Length': authPage.length});
+      res.write(authPage);
+      res.end();
+      return;
+    })
+    .catch((e) => {
+      console.log(e);
+      console.log(errorMsg)
+      sendJSON(res, { error: `Unable to authenticate app request: ${errorMsg}` }, 400);
+      return;
+    });
+}
+
+/*
+ * Update a named identity's profile with new app data, if necessary.
+ */
+function updateProfileApps(id: NamedIdentityType, appOrigin: string) 
+  : { profile: Object, changed: boolean } {
+
+  let profile = id.profile;
+  let needProfileUpdate = false;
+
+  if (!profile) {
+    // instantiate 
+    console.log(`Instantiating profile for ${id.name}`);
+    needProfileUpdate = true;
+    profile = {
+      'type': '@Person',
+      'account': [],
+      'apps': {},
+    };
+  }
+
+  // do we need to update the Gaia hub read URL in the profile?
+  if (profile.apps === null || profile.apps === undefined) {
+    needProfileUpdate = true;
+
+    console.log(`Adding multi-reader Gaia links to profile for ${id.name}`);
+    profile.apps = {};
+  }
+
+  if (!profile.apps.hasOwnProperty(appOrigin) || !profile.apps[appOrigin]) {
+    needProfileUpdate = true;
+    console.log(`Setting Gaia read URL ${id.gaiaConnection.url_prefix} for ${appOrigin} ` +
+      `in profile for ${id.name}`);
+
+    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
+  }
+  else if (profile.apps[appOrigin] !== id.gaiaConnection.url_prefix) {
+    needProfileUpdate = true;
+    console.log(`Overriding Gaia read URL for ${appOrigin} from ${profile.apps[appOrigin]} ` +
+      `to ${id.gaiaConnection.url_prefix} in profile for ${id.name}`);
+
+    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
+  }
+
+  return { profile, changed: needProfileUpdate };
+}
+
+
+/*
+ * Handle GET /signin?authResponse=...
+ * Takes an authResponse from the page generated on GET /auth?authRequest=....,
+ * verifies it, updates the name's profile's app's entry with the latest Gaia
+ * hub information (if necessary), and redirects the user back to the application.
+ *
+ * Redirects the user on success.
+ * Sends the user an error page on failure.
+ * Returns a Promise that resolves to nothing.
+ */
+function handleSignIn(network: Object, identities: Array<NamedIdentityType>, gaiaHubUrl: string, 
+                      req: express.request, res: express.response) {
+  
+  const authResponse = req.query.authResponse;
+  if (!authResponse) {
+    return Promise.resolve().then(() => {
+      sendJSON(res, { error: 'No authResponse given' }, 400);
+    });
+  }
+  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
+
+  let errorMsg;
+  let errorStatusCode = 400;
+  let authResponsePayload;
+    
+  let id = null;
+  let appOrigin = null;
+  let redirectUri = null;
+  let scopes = [];
+
+  return Promise.resolve().then(() => {
+    return blockstack.verifyAuthResponse(authResponse, nameLookupUrl);
+  })
+  .then((valid) => {
+    if (!valid) {
+      errorMsg = 'Unable to verify authResponse token';
+      throw new Error(errorMsg);
+    }
+
+    const authResponseToken = jsontokens.decodeToken(authResponse);
+    authResponsePayload = authResponseToken.payload;
+
+    // find name and profile we're signing in as
+    for (let i = 0; i < identities.length; i++) {
+      if (identities[i].name === authResponsePayload.username) {
+        id = identities[i];
+
+        appOrigin = authResponsePayload.metadata.appOrigin;
+        redirectUri = authResponsePayload.metadata.redirect_uri;
+        scopes = authResponsePayload.metadata.scopes;
+
+        console.log(`App ${appOrigin} requests scopes ${JSON.stringify(scopes)}`);
+        break;
+      }
+    }
+
+    if (!id || !appOrigin || !redirectUri) {
+      errorMsg = 'Auth response was not generated by this authenticator';
+      throw new Error(errorMsg);
+    }
+    
+    const newProfileData = updateProfileApps(id, appOrigin);
+    const profile = newProfileData.profile;
+    const needProfileUpdate = newProfileData.changed && scopes.includes('store_write');
+
+    // sign and replicate new profile if we need to.
+    // otherwise do nothing 
+    if (needProfileUpdate) {
+      console.log(`Upload new profile to ${gaiaHubUrl}`);
+      const profileJWT = makeProfileJWT(profile, id.privateKey);
+      return gaiaUploadProfileAll(
+        network, [gaiaHubUrl], 'profile.json', profileJWT, id.privateKey);
+    }
+    else {
+      console.log(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
+      return { dataUrls: [], error: null };
+    }
+  })
+  .then((gaiaUrls) => {
+    if (gaiaUrls.hasOwnProperty('error') && gaiaUrls.error) {
+      errorMsg = `Failed to upload new profile: ${gaiaUrls.error}`;
+      errorStatusCode = 502;
+      throw new Error(errorMsg);
+    }
+
+    // success!
+    // redirect to application
+    const appUri = blockstack.updateQueryStringParameter(redirectUri, 'authResponse', authResponse); 
+    res.writeHead(302, {'Location': appUri});
+    res.end();
+    return;
+  })
+  .catch((e) => {
+    console.log(e);
+    console.log(errorMsg)
+    sendJSON(res, { error: `Unable to process signin request: ${errorMsg}` }, errorStatusCode);
+    return;
+  });
+}
+
+/*
+ * Run an authentication daemon on a given port.
+ * args:
+ * @port (number) the port to listen on 
+ * @gaiaHubUrl (string) the write endpoint of your preferred Gaia hub
+ * @mnemonic (string) your 12-word phrase
+ */
+function authDaemon(network: Object, args: Array<string>) {
+  const port = parseInt(args[0]);
+  const gaiaHubUrl = args[1];
+  const mnemonic = args[2];
+
+  if (port < 0 || port > 65535) {
+    return JSONStringify({ 'error': 'Invalid port' });
+  }
+
+  // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
+  const identitiesPromise = getIdentityInfo(network, mnemonic, gaiaHubUrl);
+  const authServer = express();
+  let errorMsg;
+
+  authServer.get(/^\/auth\/*$/, (req: express.request, res: express.response) => {
+    return identitiesPromise.then((ids) => handleAuth(
+      network, ids, mnemonic, gaiaHubUrl, port, req, res));
+  });
+
+  authServer.get(/^\/signin\/*$/, (req: express.request, res: express.response) => {
+    return identitiesPromise.then((ids) => handleSignIn(network, ids, gaiaHubUrl, req, res));
+  });
+
+  authServer.listen(port, () => console.log(`Authentication server started on ${port}`));
+
+  noExit = true;
+  return Promise.resolve().then(() => 'Press ^C to exit');
+}
+
+
+/*
  * Global set of commands
  */
 const COMMANDS = {
+  'auth': authDaemon,
   'announce': announce,
   'balance': balance,
   'convert_address': addressConvert,
@@ -3176,11 +3547,17 @@ export function CLIMain() {
         console.log(result);
       }
     })
-    .then(() => process.exit(exitcode))
+    .then(() => {
+      if (!noExit) {
+        process.exit(exitcode);
+      }
+    })
     .catch((e) => {
        console.error(e.stack);
        console.error(e.message);
-       process.exit(1);
+       if (!noExit) {
+         process.exit(1);
+       }
      });
   }
 }
