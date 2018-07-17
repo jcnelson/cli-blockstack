@@ -187,6 +187,50 @@ const CLI_ARGS = {
       help: 'Convert a Bitcoin address to a Stacks address and vice versa.',
       group: 'Account Management',
     },
+    decrypt_keychain: {
+      type: "array",
+      items: [
+        {
+          name: "encrypted_backup_phrase",
+          type: "string",
+          realtype: "encrypted_backup_phrase",
+          pattern: "^[^ ]+$",
+        },
+        {
+          name: 'password',
+          type: 'string',
+          realtype: 'password',
+          pattern: '.+',
+        },
+      ],
+      minItems: 1,
+      maxItems: 2,
+      help: 'Decrypt an encrypted backup phrase with a password.  Decrypts to a 12-word ' +
+      'backup phrase if done correctly.  The password will be prompted if not given.',
+      group: "Key Management",
+    },
+    encrypt_keychain: {
+      type: "array",
+      items: [
+        {
+          name: "backup_phrase",
+          type: "string",
+          realtype: "backup_phrase",
+          pattern: ".+",
+        },
+        {
+          name: 'password',
+          type: 'string',
+          realtype: 'password',
+          pattern: '.+',
+        },
+      ],
+      minItems: 1,
+      maxItems: 2,
+      help: "Encrypt a 12-word backup phrase, which can be decrypted later with the " +
+      "decrypt_backup_phrase command.  The password will be prompted if not given.",
+      group: "Key Management",
+    },
     gaia_getfile: {
       type: "array",
       items: [
