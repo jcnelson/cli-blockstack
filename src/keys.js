@@ -1,5 +1,8 @@
 /* @flow */
 
+// TODO: most of this code should be in blockstack.js
+// Will remove most of this code once the wallet functionality is there instead.
+
 const blockstack = require('blockstack')
 const keychains = require('blockstack-keychains')
 const bitcoin = require('bitcoinjs-lib')
