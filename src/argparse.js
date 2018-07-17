@@ -142,9 +142,9 @@ const CLI_ARGS = {
           pattern: URL_PATTERN,
         },
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: 'string',
-          realtype: 'backup_phrase',
+          realtype: 'backup_phrase_or_ciphertext',
           pattern: '.+',
         },
       ],
@@ -152,7 +152,10 @@ const CLI_ARGS = {
       maxItems: 3,
       help: 'Run an authentication endpoint on the given port for the set of names owned ' +
       'by the given backup phrase.  Send authenticators the given Gaia hub URL in the auth ' +
-      'response.',
+      'response.' +
+      '\n' +
+      'You can supply your encrypted backup phrase instead of the raw backup phrase.  If so, ' +
+      'then you will be prompted for your password before any authentication takes place.',
       group: 'Authentication',
     },
     balance: {
