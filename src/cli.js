@@ -2883,35 +2883,65 @@ function addressConvert(network: Object, args: Array<string>) {
  * args:
  * @port (number) the port to listen on 
  * @gaiaHubUrl (string) the write endpoint of your preferred Gaia hub
- * @mnemonic (string) your 12-word phrase
+ * @mnemonic (string) your 12-word phrase, optionally encrypted.  If encrypted, then
+ * a password will be prompted.
  */
 function authDaemon(network: Object, args: Array<string>) {
   const port = parseInt(args[0]);
   const gaiaHubUrl = args[1];
-  const mnemonic = args[2];
+  const mnemonicOrCiphertext = args[2];
 
   if (port < 0 || port > 65535) {
-    return JSONStringify({ 'error': 'Invalid port' });
+    return JSONStringify({ error: 'Invalid port' });
   }
 
-  // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
-  const identitiesPromise = getIdentityInfo(network, mnemonic, gaiaHubUrl);
-  const authServer = express();
-  let errorMsg;
-
-  authServer.get(/^\/auth\/*$/, (req: express.request, res: express.response) => {
-    return identitiesPromise.then((ids) => handleAuth(
-      network, ids, mnemonic, gaiaHubUrl, port, req, res));
+  const mnemonicPromise = Promise.resolve().then(() => {
+    if (mnemonicOrCiphertext.split(/ +/g).length !== 12) {
+      // encrypted 
+      return decryptMnemonic(network, [mnemonicOrCiphertext]);
+    }
+    else {
+      // not encrypted 
+      return mnemonicOrCiphertext;
+    }
+  })
+  .then((mnemonicOrError) => {
+    let errcode = ''
+    try {
+      // might be a JSON string with an error 
+      errcode = JSON.parse(mnemonicOrError).error;
+    }
+    catch (e) {
+      // well-formed mnemonic
+      return mnemonicOrError;
+    }
+    throw new Error(errcode);
   });
 
-  authServer.get(/^\/signin\/*$/, (req: express.request, res: express.response) => {
-    return identitiesPromise.then((ids) => handleSignIn(network, ids, gaiaHubUrl, req, res));
-  });
+  return mnemonicPromise
+    .then((mnemonic) => {
+      noExit = true;
 
-  authServer.listen(port, () => console.log(`Authentication server started on ${port}`));
+      // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
+      const identitiesPromise = getIdentityInfo(network, mnemonic, gaiaHubUrl);
+      const authServer = express();
+      let errorMsg;
 
-  noExit = true;
-  return Promise.resolve().then(() => 'Press ^C to exit');
+      authServer.get(/^\/auth\/*$/, (req: express.request, res: express.response) => {
+        return identitiesPromise.then((ids) => handleAuth(
+          network, ids, mnemonic, gaiaHubUrl, port, req, res));
+      });
+
+      authServer.get(/^\/signin\/*$/, (req: express.request, res: express.response) => {
+        return identitiesPromise.then((ids) => handleSignIn(network, ids, gaiaHubUrl, req, res));
+      });
+
+      authServer.listen(port, () => console.log(`Authentication server started on ${port}`));
+      return 'Press Ctrl+C to exit';
+    })
+    .catch((e) => {
+      return JSONStringify({ error: e.message });
+    });
 }
 
 /*
