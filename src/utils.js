@@ -4,7 +4,12 @@ const bitcoinjs = require('bitcoinjs-lib');
 const blockstack = require('blockstack');
 const URL = require('url');
 const RIPEMD160 = require('ripemd160');
-const c32check = require('c32check');
+const readline = require('readline');
+const stream = require('stream');
+
+import {
+  parseZoneFile
+} from 'zone-file';
 
 import ecurve from 'ecurve';
 
@@ -375,42 +380,6 @@ export function checkUrl(url: string) : string {
 }
 
 /*
- * Connect to Gaia hub.  Make sure we use a mainnet address always, even in test mode
- * (works around a bug in some versions of blockstack.js)
- */
-export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: string) {
-  const addressMainnet = network.coerceMainnetAddress(
-    getPrivateKeyAddress(network, `${canonicalPrivateKey(privateKey)}01`))
-  const addressMainnetCanonical = network.coerceMainnetAddress(
-    getPrivateKeyAddress(network, canonicalPrivateKey(privateKey)))
-
-  return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(privateKey))
-    .then((hubConfig) => {
-      if (network.coerceMainnetAddress(hubConfig.address) === addressMainnet) {
-        hubConfig.address = addressMainnet;
-      }
-      else if (network.coerceMainnetAddress(hubConfig.address) === addressMainnetCanonical) {
-        hubConfig.address = addressMainnetCanonical;
-      }
-      else {
-        throw new Error('Invalid private key: ' +
-          `${network.coerceMainnetAddress(hubConfig.address)} is neither ` +
-          `${addressMainnet} or ${addressMainnetCanonical}`);
-      }
-
-      /*
-      if (network.coerceMainnetAddress(hubConfig.address) !== addressMainnet) {
-        throw new Error('Invalid private key: ' +
-          `${network.coerceMainnetAddress(hubConfig.address)} != ${addressMainnet}`);
-      }
-      // this fixes a bug in some versions of blockstack.js
-      hubConfig.address = addressMainnet;
-      */
-      return hubConfig;
-    });
-}
-
-/*
  * Sign a profile into a JWT
  */
 export function makeProfileJWT(profileData: Object, privateKey: string) : string {
@@ -418,4 +387,140 @@ export function makeProfileJWT(profileData: Object, privateKey: string) : string
     const wrappedToken = blockstack.wrapProfileToken(signedToken);
     const tokenRecords = [wrappedToken];
     return JSONStringify(tokenRecords);
+}
+
+/*
+ * Broadcast a transaction and a zone file.
+ * Returns an object that encodes the success/failure of doing so.
+ * If zonefile is None, then only the transaction will be sent.
+ */
+export function broadcastTransactionAndZoneFile(network: Object,
+                                                tx: string,
+                                                zonefile: ?string = null) {
+  let txid;
+  return Promise.resolve().then(() => {
+    return network.broadcastTransaction(tx);
+  })
+  .then((_txid) => {
+    txid = _txid;
+    if (zonefile) {
+      return network.broadcastZoneFile(zonefile, txid);
+    }
+    else {
+      return { 'status': true };
+    }
+  })
+  .then((resp) => {
+    if (!resp.status) {
+      return {
+        'status': false,
+        'error': 'Failed to broadcast zone file',
+        'txid': txid
+      };
+    }
+    else {
+      return {
+        'status': true,
+        'txid': txid
+      };
+    }
+  })
+  .catch((e) => {
+    return {
+      'status': false,
+      'error': 'Caught exception sending transaction or zone file',
+      'message': e.message,
+      'stacktrace': e.stack
+    }
+  });
+}
+
+
+/*
+ * Easier-to-use getNameInfo.  Returns null if the name does not exist.
+ */
+export function getNameInfoEasy(network: Object, name: string) : Promise<*> {
+  const nameInfoPromise = network.getNameInfo(name)
+    .then((nameInfo) => nameInfo)
+    .catch((error) => {
+      if (error.message === 'Name not found') {
+        return null;
+      } else {
+        throw error;
+      }
+    });
+
+  return nameInfoPromise;
+}
+
+/*
+ * Look up a name's zone file, profile URL, and profile
+ * Returns a Promise to the above, or {'error': ...}
+ */
+export function nameLookup(network: Object, name: string) 
+  : Promise<{ profile: Object, profileUrl: ?string, zonefile: ?string }> {
+
+  const nameInfoPromise = getNameInfoEasy(network, name);
+  const profilePromise = blockstack.lookupProfile(name)
+    .catch(() => null);
+
+  const zonefilePromise = nameInfoPromise.then((nameInfo) => nameInfo ? nameInfo.zonefile : null);
+
+  return Promise.resolve().then(() => {
+    return Promise.all([profilePromise, zonefilePromise, nameInfoPromise])
+  })
+  .then(([profile, zonefile, nameInfo]) => {
+    if (!nameInfo) {
+      throw new Error('Name not found')
+    }
+    if (nameInfo.hasOwnProperty('grace_period') && nameInfo.grace_period) {
+      throw new Error(`Name is expired at block ${nameInfo.expire_block} ` +
+        `and must be renewed by block ${nameInfo.renewal_deadline}`);
+    }
+
+    let profileUrl = null;
+    try {
+      const zonefileJSON = parseZoneFile(zonefile);
+      if (zonefileJSON.uri && zonefileJSON.hasOwnProperty('$origin')) {
+        profileUrl = blockstack.getTokenFileUrl(zonefileJSON);
+      }
+    }
+    catch(e) {
+      console.log(e);
+    }
+
+    const ret = {
+      zonefile: zonefile,
+      profile: profile,
+      profileUrl: profileUrl
+    };
+    return ret;
+  });
+}
+
+/*
+ * Get a password.  Don't echo characters to stdout.
+ * Password will be passed to the given callback.
+ */
+export function getpass(promptStr: string, cb: (passwd: string) => void) {
+  const silentOutput = new stream.Writable({
+    write: (chunk, encoding, callback) => {
+      callback();
+    }
+  });
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: silentOutput,
+    terminal: true
+  });
+
+  process.stderr.write(promptStr);
+  rl.question('', (passwd) => {
+    rl.close();
+    process.stderr.write('\n');
+    cb(passwd);
+  });
+
+  return;
 }
