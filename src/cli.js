@@ -14,10 +14,6 @@ const express = require('express')
 const jsontokens = require('jsontokens')
 
 import {
-  parseZoneFile
-} from 'zone-file';
-
-import {
   getOwnerKeyInfo,
   getPaymentKeyInfo,
   getApplicationKeyInfo,
@@ -41,9 +37,21 @@ import {
 } from './argparse';
 
 import {
+  encryptBackupPhrase,
+  decryptBackupPhrase
+} from './encrypt';
+
+import {
   CLINetworkAdapter,
   getNetwork
 } from './network';
+
+import {
+  gaiaConnect,
+  gaiaUploadProfile,
+  gaiaUploadProfileAll,
+  makeZoneFileFromGaiaUrl
+} from './data';
 
 import {
   MultiSigKeySigner,
@@ -56,14 +64,18 @@ import {
   hash160,
   checkUrl,
   decodePrivateKey,
-  gaiaConnect,
-  makeProfileJWT
+  makeProfileJWT,
+  broadcastTransactionAndZoneFile,
+  getNameInfoEasy,
+  nameLookup,
+  getpass
 } from './utils';
 
 import {
-  type NamedIdentityType,
-  makeAuthPage
-} from './data';
+  getIdentityInfo,
+  handleAuth,
+  handleSignIn
+} from './auth';
 
 // global CLI options
 let txOnly = false;
@@ -74,24 +86,6 @@ let gracePeriod = 5000;
 let noExit = false;
 
 let BLOCKSTACK_TEST = process.env.BLOCKSTACK_TEST ? true : false;
-
-
-/*
- * Easier-to-use getNameInfo.  Returns null if the name does not exist.
- */
-function getNameInfo(network: Object, name: string) : Promise<*> {
-  const nameInfoPromise = network.getNameInfo(name)
-    .then((nameInfo) => nameInfo)
-    .catch((error) => {
-      if (error.message === 'Name not found') {
-        return null;
-      } else {
-        throw error;
-      }
-    });
-
-  return nameInfoPromise;
-}
 
 /*
  * Get a name's record information
@@ -188,44 +182,9 @@ function lookup(network: Object, args: Array<string>) {
   network.setCoerceMainnetAddress(true);
 
   const name = args[0];
-  const nameInfoPromise = getNameInfo(network, name);
-  const profilePromise = blockstack.lookupProfile(name)
-    .catch(() => null);
-
-  const zonefilePromise = nameInfoPromise.then((nameInfo) => nameInfo ? nameInfo.zonefile : null);
-
-  return Promise.all([profilePromise, zonefilePromise, nameInfoPromise])
-    .then(([profile, zonefile, nameInfo]) => {
-      if (!nameInfo) {
-        return JSONStringify({
-          error: 'Name not found'
-        });
-      }
-      if (nameInfo.hasOwnProperty('grace_period') && nameInfo.grace_period) {
-        return JSONStringify({
-          error: `Name is expired at block ${nameInfo.expire_block} and must be renewed by block ${nameInfo.renewal_deadline}`
-        });
-      }
-
-      let profileUrl = null;
-      try {
-        const zonefileJSON = parseZoneFile(zonefile);
-        if (zonefileJSON.uri && zonefileJSON.hasOwnProperty('$origin')) {
-          profileUrl = blockstack.getTokenFileUrl(zonefileJSON);
-        }
-      }
-      catch(e) {
-        console.log(e);
-        ;
-      }
-
-      const ret = {
-        zonefile: zonefile,
-        profile: profile,
-        profileUrl: profileUrl
-      };
-      return JSONStringify(ret);
-    });
+  return nameLookup(network, name)
+    .then((nameLookupInfo) => JSONStringify(nameLookupInfo))
+    .catch((e) => JSONStringify({ error: e.message }));
 }
 
 /*
@@ -367,7 +326,7 @@ function txPreorder(network: Object, args: Array<string>, preorderTxOnly: ?boole
     return sumUTXOs(utxos);
   });
 
-  const nameInfoPromise = getNameInfo(network, name);
+  const nameInfoPromise = getNameInfoEasy(network, name);
   const blockHeightPromise = network.getBlockHeight();
 
   const safetyChecksPromise = Promise.all([
@@ -533,7 +492,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
     return sumUTXOs(utxos);
   });
  
-  const nameInfoPromise = getNameInfo(network, name);
+  const nameInfoPromise = getNameInfoEasy(network, name);
   const blockHeightPromise = network.getBlockHeight();
 
   const safetyChecksPromise = Promise.all([
@@ -1440,50 +1399,6 @@ function namespaceReady(network: Object, args: Array<string>) {
     });
 }
 
-/*
- * Broadcast a transaction and a zone file.
- * Returns an object that encodes the success/failure of doing so.
- * If zonefile is None, then only the transaction will be sent.
- */
-function broadcastTransactionAndZoneFile(network: Object, tx: String, zonefile: ?string = null) {
-  let txid;
-  return Promise.resolve().then(() => {
-    return network.broadcastTransaction(tx);
-  })
-  .then((_txid) => {
-    txid = _txid;
-    if (zonefile) {
-      return network.broadcastZoneFile(zonefile, txid);
-    }
-    else {
-      return { 'status': true };
-    }
-  })
-  .then((resp) => {
-    if (!resp.status) {
-      return {
-        'status': false,
-        'error': 'Failed to broadcast zone file',
-        'txid': txid
-      };
-    }
-    else {
-      return {
-        'status': true,
-        'txid': txid
-      };
-    }
-  })
-  .catch((e) => {
-    return {
-      'status': false,
-      'error': 'Caught exception sending transaction or zone file',
-      'message': e.message,
-      'stacktrace': e.stack
-    }
-  });
-}
-
 
 /*
  * Generate and send a name-import transaction
@@ -1745,7 +1660,7 @@ function register(network: Object, args: Array<string>) {
   }
   else {
     // generate one
-    zonefilePromise = makeZonefileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
+    zonefilePromise = makeZoneFileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
   }
 
   let preorderTx = "";
@@ -2010,13 +1925,13 @@ function registerSubdomain(network: Object, args: Array<string>) {
   }
   else {
     // generate one 
-    zonefilePromise = makeZonefileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
+    zonefilePromise = makeZoneFileFromGaiaUrl(network, name, gaiaHubUrl, ownerKey);
   }
 
   let broadcastResult = null;
   let api_key = process.env.API_KEY || null;
 
-  const onChainNamePromise = getNameInfo(network, onChainName);
+  const onChainNamePromise = getNameInfoEasy(network, onChainName);
   const registrarStatusPromise = fetch(`${registrarUrl}/index`)
     .then((resp) => resp.json());
 
@@ -2167,100 +2082,6 @@ function profileVerify(network: Object, args: Array<string>) {
   });
 }
 
-/*
- * Upload profile data to a Gaia hub
- * @gaiaHubUrl (string) the base scheme://host:port URL to the Gaia hub
- * @gaiaData (string) the data to upload
- * @privateKey (string) the private key to use to sign the challenge
- */
-function gaiaUploadProfile(network: Object,
-                           gaiaHubURL: string, 
-                           gaiaPath: string,
-                           gaiaData: string,
-                           privateKey: string) {
-  return gaiaConnect(network, gaiaHubURL, privateKey)
-    .then((hubConfig) => {
-      return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
-    });
-}
-
-/*
- * Upload profile data to all Gaia hubs, given a zone file
- * @network (object) the network to use
- * @gaiaUrls (array) list of Gaia URLs
- * @gaiaPath (string) the path to the file to store in Gaia
- * @gaiaData (string) the data to store
- * @privateKey (string) the hex-encoded private key
- * @return a promise with {'dataUrls': [urls to the data]}, or {'error': ...}
- */
-function gaiaUploadProfileAll(network: Object, gaiaUrls: Array<string>, gaiaPath: string, 
-  gaiaData: string, privateKey: string) : Promise<*> {
-
-  const sanitizedGaiaUrls = gaiaUrls.map((gaiaUrl) => {
-    const urlInfo = URL.parse(gaiaUrl);
-    if (!urlInfo.protocol) {
-      return '';
-    }
-    if (!urlInfo.host) {
-      return '';
-    }
-    // keep flow happy
-    return `${String(urlInfo.protocol)}//${String(urlInfo.host)}`;
-  })
-  .filter((gaiaUrl) => gaiaUrl.length > 0);
-
-  const uploadPromises = sanitizedGaiaUrls.map((gaiaUrl) => 
-    gaiaUploadProfile(network, gaiaUrl, gaiaPath, gaiaData, privateKey));
-
-  return Promise.all(uploadPromises)
-    .then((publicUrls) => {
-      return { error: null, dataUrls: publicUrls };
-    })
-    .catch((e) => {
-      return { error: `Failed to upload: ${e.message}`, dataUrls: null };
-    });
-}
-
-/*
- * Make a zone file from a Gaia hub---reach out to the Gaia hub, get its read URL prefix,
- * and generate a zone file with the profile mapped to the Gaia hub.
- *
- * @network (object) the network connection
- * @name (string) the name that owns the zone file
- * @gaiaHubUrl (string) the URL to the gaia hub write endpoint
- * @ownerKey (string) the owner private key
- *
- * Returns a promise that resolves to the zone file with the profile URL
- */
-function makeZonefileFromGaiaUrl(network: Object, name: string, 
-  gaiaHubUrl: string, ownerKey: string) {
-
-  const address = getPrivateKeyAddress(network, ownerKey);
-  const mainnetAddress = network.coerceMainnetAddress(address)
-
-  return gaiaConnect(network, gaiaHubUrl, ownerKey)
-    .then((hubConfig) => {
-      if (!hubConfig.url_prefix) {
-        throw new Error('Invalid hub config: no read_url_prefix defined');
-      }
-      const gaiaReadUrl = hubConfig.url_prefix.replace(/\/+$/, "");
-      const profileUrl = `${gaiaReadUrl}/${mainnetAddress}/profile.json`;
-      try {
-        checkUrl(profileUrl);
-      }
-      catch(e) {
-        throw new SafetyError({
-          'status': false,
-          'error': e.message,
-          'hints': [
-            'Make sure the Gaia hub read URL scheme is present and well-formed.',
-            `Check the "read_url_prefix" field of ${gaiaHubUrl}/hub_info`
-          ],
-        });
-      }
-      return blockstack.makeProfileZoneFile(name, profileUrl);
-    });
-}
 
 /*
  * Store a signed profile for a name or an address.
@@ -2297,7 +2118,7 @@ function profileStore(network: Object, args: Array<string>) {
   }
   else {
     // name; find the address 
-    nameInfoPromise = getNameInfo(network, nameOrAddress);
+    nameInfoPromise = getNameInfoEasy(network, nameOrAddress);
   }
   
   const verifyProfilePromise = profileVerify(network, 
@@ -2752,7 +2573,8 @@ function getKeyAddress(network: Object, args: Array<string>) {
 function makeGaiaSessionToken(appPrivateKey: string, hubURL: string | null) {  
   const ownerPrivateKey = '24004db06ef6d26cdd2b0fa30b332a1b10fa0ba2b07e63505ffc2a9ed7df22b4';
   const transitPrivateKey = 'f33fb466154023aba2003c17158985aa6603db68db0f1afc0fcf1d641ea6c2cb';
-  const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f19582124f4b07172eb61187afba4514828f866a8a223e0d5c539b2e38a59ab8bb3';
+  const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f1' + 
+    '9582124f4b07172eb61187afba4514828f866a8a223e0d5c539b2e38a59ab8bb3';
 
   window.localStorage.setItem('blockstack-transit-private-key', transitPrivateKey)
 
@@ -2950,7 +2772,7 @@ function gaiaSetHub(network: Object, args: Array<string>) {
   const hubUrl = args[3];
   const mnemonic = args[4];
 
-  const nameInfoPromise = getNameInfo(network, blockstackID)
+  const nameInfoPromise = getNameInfoEasy(network, blockstackID)
     .then((nameInfo) => {
       if (!nameInfo) {
         throw new Error('Name not found');
@@ -3057,315 +2879,6 @@ function addressConvert(network: Object, args: Array<string>) {
 }
 
 /*
- * Find all identity addresses that have names attached to them.
- */
-function loadNamedIdentitiesLoop(network: Object, 
-                                 mnemonic: string, 
-                                 index: number, 
-                                 identities: Array<NamedIdentityType>) {
-  const ret = [];
-
-  // 65536 is a ridiculously huge number
-  const keyInfo = getOwnerKeyInfo(network, mnemonic, index);
-  return network.getNamesOwned(keyInfo.idAddress.slice(3))
-    .then((nameList) => {
-      if (nameList.length === 0) {
-        // out of names 
-        return identities;
-      }
-      for (let i = 0; i < nameList.length; i++) {
-        identities.push({
-          name: nameList[i],
-          idAddress: keyInfo.idAddress,
-          privateKey: keyInfo.privateKey,
-          index: index,
-          profile: null,
-          profileUrl: '',
-          gaiaConnection: undefined
-        });
-      }
-      return loadNamedIdentitiesLoop(network, mnemonic, index + 1, identities);
-    });
-}
-
-function loadNamedIdentities(network: Object, mnemonic: string) {
-  return loadNamedIdentitiesLoop(network, mnemonic, 0, []);
-}
-
-/*
- * Send a JSON HTTP response
- */
-function sendJSON(res: express.response, data: Object, statusCode: number) {
-  res.writeHead(statusCode, {'Content-Type' : 'application/json'})
-  res.write(JSON.stringify(data))
-  res.end()
-}
-
-/*
- * Get all of a 12-word phrase's identities, profiles, and Gaia connections
- */
-function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: string) 
-  : Promise<Array<NamedIdentityType>> {
-
-  let identities = [];
-  let gaiaConnections = [];
-  network.setCoerceMainnetAddress(true);    // for lookups in regtest
-  
-  // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
-  const identitiesPromise = loadNamedIdentities(network, mnemonic)
-    .then((ids) => {
-      const profilePromises = [];
-      for (let i = 0; i < ids.length; i++) {
-        const profilePromise = lookup(network, [ids[i].name])
-          .then((profileJSON) => JSON.parse(profileJSON))
-          .catch(() => null);
-
-        profilePromises.push(profilePromise);
-      }
-
-      identities = ids;
-      return Promise.all(profilePromises);
-    })
-    .then((profileDatas) => {
-      network.setCoerceMainnetAddress(false);
-
-      for (let i = 0; i < profileDatas.length; i++) {
-        identities[i].profile = profileDatas[i].profile;
-        identities[i].zonefile = profileDatas[i].zonefile;
-        identities[i].profileUrl = profileDatas[i].profileUrl;
-      }
-      return identities;
-    })
-    .then((ids) => {
-      // connect to all Gaia hubs
-      const gaiaConnectionPromises = [];
-      for (let i = 0; i < ids.length; i++) {
-        const gaiaPromise = gaiaConnect(network, gaiaHubUrl, ids[i].privateKey);
-        gaiaConnectionPromises.push(gaiaPromise);
-      }
-
-      return Promise.all(gaiaConnectionPromises);
-    })
-    .then((connections) => {
-      network.setCoerceMainnetAddress(false);
-      gaiaConnections = connections;
-
-      for (let i = 0; i < connections.length; i++) {
-        identities[i].gaiaConnection = connections[i];
-      }
-
-      return identities;
-    });
-
-  return identitiesPromise;
-}
-
-
-/*
- * Handle GET /auth?authRequest=...
- * If the authRequest is verifiable and well-formed, and if we can fetch the application
- * manifest, then we can render an auth page to the user.
- * Serves back the sign-in page on success.
- * Serves back an error page on error.
- * Returns a Promise that resolves to nothing.
- */
-function handleAuth(network: Object, identities: Array<NamedIdentityType>,
-                    mnemonic: string, gaiaHubUrl: string, port: number, 
-                    req: express.request, res: express.response) : Promise<*> {
-
-  const authToken = req.query.authRequest;
-  if (!authToken) {
-     return Promise.resolve().then(() => {
-       sendJSON(res, { error: 'No authRequest given' }, 400);
-     });
-  }
- 
-  let errorMsg;
-  return Promise.resolve().then(() => {
-      errorMsg = 'Unable to verify authentication token';
-      return blockstack.verifyAuthRequest(authToken);
-    })
-    .then((valid) => {
-      if (!valid) {
-        errorMsg = 'Invalid authentication token: could not verify';
-        throw new Error(errorMsg);
-      }
-      errorMsg = 'Unable to fetch app manifest';
-      return blockstack.fetchAppManifest(authToken);
-    })
-    .then((appManifest) => {
-      const decodedAuthToken = jsontokens.decodeToken(authToken);
-      const decodedAuthPayload = decodedAuthToken.payload;
-      if (!decodedAuthPayload) {
-        errorMsg = 'Invalid authentication token: no payload';
-        throw new Error(errorMsg);
-      }
-
-      // make sign-in page
-      const authPage = makeAuthPage(
-        network, port, mnemonic, gaiaHubUrl, appManifest, decodedAuthPayload, identities);
-
-      res.writeHead(200, {'Content-Type': 'text/html', 'Content-Length': authPage.length});
-      res.write(authPage);
-      res.end();
-      return;
-    })
-    .catch((e) => {
-      console.log(e);
-      console.log(errorMsg)
-      sendJSON(res, { error: `Unable to authenticate app request: ${errorMsg}` }, 400);
-      return;
-    });
-}
-
-/*
- * Update a named identity's profile with new app data, if necessary.
- */
-function updateProfileApps(id: NamedIdentityType, appOrigin: string) 
-  : { profile: Object, changed: boolean } {
-
-  let profile = id.profile;
-  let needProfileUpdate = false;
-
-  if (!profile) {
-    // instantiate 
-    console.log(`Instantiating profile for ${id.name}`);
-    needProfileUpdate = true;
-    profile = {
-      'type': '@Person',
-      'account': [],
-      'apps': {},
-    };
-  }
-
-  // do we need to update the Gaia hub read URL in the profile?
-  if (profile.apps === null || profile.apps === undefined) {
-    needProfileUpdate = true;
-
-    console.log(`Adding multi-reader Gaia links to profile for ${id.name}`);
-    profile.apps = {};
-  }
-
-  if (!profile.apps.hasOwnProperty(appOrigin) || !profile.apps[appOrigin]) {
-    needProfileUpdate = true;
-    console.log(`Setting Gaia read URL ${id.gaiaConnection.url_prefix} for ${appOrigin} ` +
-      `in profile for ${id.name}`);
-
-    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
-  }
-  else if (profile.apps[appOrigin] !== id.gaiaConnection.url_prefix) {
-    needProfileUpdate = true;
-    console.log(`Overriding Gaia read URL for ${appOrigin} from ${profile.apps[appOrigin]} ` +
-      `to ${id.gaiaConnection.url_prefix} in profile for ${id.name}`);
-
-    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
-  }
-
-  return { profile, changed: needProfileUpdate };
-}
-
-
-/*
- * Handle GET /signin?authResponse=...
- * Takes an authResponse from the page generated on GET /auth?authRequest=....,
- * verifies it, updates the name's profile's app's entry with the latest Gaia
- * hub information (if necessary), and redirects the user back to the application.
- *
- * Redirects the user on success.
- * Sends the user an error page on failure.
- * Returns a Promise that resolves to nothing.
- */
-function handleSignIn(network: Object, identities: Array<NamedIdentityType>, gaiaHubUrl: string, 
-                      req: express.request, res: express.response) {
-  
-  const authResponse = req.query.authResponse;
-  if (!authResponse) {
-    return Promise.resolve().then(() => {
-      sendJSON(res, { error: 'No authResponse given' }, 400);
-    });
-  }
-  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
-
-  let errorMsg;
-  let errorStatusCode = 400;
-  let authResponsePayload;
-    
-  let id = null;
-  let appOrigin = null;
-  let redirectUri = null;
-  let scopes = [];
-
-  return Promise.resolve().then(() => {
-    return blockstack.verifyAuthResponse(authResponse, nameLookupUrl);
-  })
-  .then((valid) => {
-    if (!valid) {
-      errorMsg = 'Unable to verify authResponse token';
-      throw new Error(errorMsg);
-    }
-
-    const authResponseToken = jsontokens.decodeToken(authResponse);
-    authResponsePayload = authResponseToken.payload;
-
-    // find name and profile we're signing in as
-    for (let i = 0; i < identities.length; i++) {
-      if (identities[i].name === authResponsePayload.username) {
-        id = identities[i];
-
-        appOrigin = authResponsePayload.metadata.appOrigin;
-        redirectUri = authResponsePayload.metadata.redirect_uri;
-        scopes = authResponsePayload.metadata.scopes;
-
-        console.log(`App ${appOrigin} requests scopes ${JSON.stringify(scopes)}`);
-        break;
-      }
-    }
-
-    if (!id || !appOrigin || !redirectUri) {
-      errorMsg = 'Auth response was not generated by this authenticator';
-      throw new Error(errorMsg);
-    }
-    
-    const newProfileData = updateProfileApps(id, appOrigin);
-    const profile = newProfileData.profile;
-    const needProfileUpdate = newProfileData.changed && scopes.includes('store_write');
-
-    // sign and replicate new profile if we need to.
-    // otherwise do nothing 
-    if (needProfileUpdate) {
-      console.log(`Upload new profile to ${gaiaHubUrl}`);
-      const profileJWT = makeProfileJWT(profile, id.privateKey);
-      return gaiaUploadProfileAll(
-        network, [gaiaHubUrl], 'profile.json', profileJWT, id.privateKey);
-    }
-    else {
-      console.log(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
-      return { dataUrls: [], error: null };
-    }
-  })
-  .then((gaiaUrls) => {
-    if (gaiaUrls.hasOwnProperty('error') && gaiaUrls.error) {
-      errorMsg = `Failed to upload new profile: ${gaiaUrls.error}`;
-      errorStatusCode = 502;
-      throw new Error(errorMsg);
-    }
-
-    // success!
-    // redirect to application
-    const appUri = blockstack.updateQueryStringParameter(redirectUri, 'authResponse', authResponse); 
-    res.writeHead(302, {'Location': appUri});
-    res.end();
-    return;
-  })
-  .catch((e) => {
-    console.log(e);
-    console.log(errorMsg)
-    sendJSON(res, { error: `Unable to process signin request: ${errorMsg}` }, errorStatusCode);
-    return;
-  });
-}
-
-/*
  * Run an authentication daemon on a given port.
  * args:
  * @port (number) the port to listen on 
@@ -3401,7 +2914,94 @@ function authDaemon(network: Object, args: Array<string>) {
   return Promise.resolve().then(() => 'Press ^C to exit');
 }
 
+/*
+ * Encrypt a backup phrase
+ * args:
+ * @backup_phrase (string) the 12-word phrase to encrypt
+ * @password (string) the password (will be interactively prompted if not given)
+ */
+function encryptMnemonic(network: Object, args: Array<string>) {
+  const mnemonic = args[0];
+  if (mnemonic.split(/ +/g).length !== 12) {
+    throw new Error('Invalid backup phrase: must be 12 words');
+  }
 
+  const passwordPromise = new Promise((resolve, reject) => {
+    let pass = '';
+    if (args.length === 2) {
+      pass = args[1];
+      resolve(pass);
+    }
+    else {
+      if (!process.stdin.isTTY) {
+        // password must be given as an argument
+        const errMsg = 'Password argument required on non-interactive mode';
+        reject(new Error(errMsg));
+      }
+      else {
+        // prompt password
+        getpass('Enter password: ', (pass1) => {
+          getpass('Enter password again: ', (pass2) => {
+            if (pass1 !== pass2) {
+              const errMsg = 'Passwords do not match';
+              reject(new Error(errMsg));
+            }
+            else {
+              resolve(pass1);
+            }
+          });
+        });
+      }
+    }
+  });
+
+  return passwordPromise
+    .then((pass) => encryptBackupPhrase(new Buffer(mnemonic), pass))
+    .then((cipherTextBuffer) => cipherTextBuffer.toString('base64'))
+    .catch((e) => {
+      return JSONStringify({ error: e.message});
+    });
+}
+
+/* Decrypt a backup phrase 
+ * args:
+ * @encrypted_backup_phrase (string) the encrypted base64-encoded backup phrase
+ * @password 9string) the password (will be interactively prompted if not given)
+ */
+function decryptMnemonic(network: Object, args: Array<string>) {
+  const ciphertext = args[0];
+ 
+  const passwordPromise = new Promise((resolve, reject) => {
+    if (args.length === 2) {
+      const pass = args[1];
+      resolve(pass);
+    }
+    else {
+      if (!process.stdin.isTTY) {
+        // password must be given 
+        reject(new Error('Password argument required in non-interactive mode'));
+      }
+      else {
+        // prompt password 
+        getpass('Enter password: ', (p) => {
+          resolve(p);
+        });
+      }
+    }
+  });
+
+  return passwordPromise
+    .then((pass) => decryptBackupPhrase(Buffer.from(ciphertext, 'base64'), pass))
+    .catch((e) => {
+      return JSONStringify({ error: `Failed to decrypt (wrong password or corrupt ciphertext), ` +
+        `details: ${e.message}` });
+    });
+}
+
+/*
+ * Decrypt a backup phrase
+ * args:
+ * @p
 /*
  * Global set of commands
  */
@@ -3410,6 +3010,8 @@ const COMMANDS = {
   'announce': announce,
   'balance': balance,
   'convert_address': addressConvert,
+  'decrypt_keychain': decryptMnemonic,
+  'encrypt_keychain': encryptMnemonic,
   'gaia_getfile': gaiaGetFile,
   'gaia_putfile': gaiaPutFile,
   'gaia_listfiles': gaiaListFiles,
