@@ -4,6 +4,7 @@ const blockstack = require('blockstack');
 import process from 'process';
 import bitcoinjs from 'bitcoinjs-lib';
 import fs from 'fs';
+
 const bigi = require('bigi')
 const URL = require('url')
 const bip39 = require('bip39')
@@ -12,6 +13,12 @@ const ZoneFile = require('zone-file')
 const c32check = require('c32check')
 const express = require('express')
 const jsontokens = require('jsontokens')
+const pathTools = require('path')
+
+import {
+  parseZoneFile,
+  makeZoneFile
+} from 'zone-file';
 
 import {
   getOwnerKeyInfo,
@@ -68,7 +75,9 @@ import {
   broadcastTransactionAndZoneFile,
   getNameInfoEasy,
   nameLookup,
-  getpass
+  getpass,
+  getBackupPhrase,
+  mkdirs
 } from './utils';
 
 import {
@@ -563,15 +572,25 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
 }
 
 /*
- * Generate a zone file for a name, given its Gaia hub URL 
+ * Generate a zone file for a name, given its Gaia hub URL
+ * Optionally includes a _resolver entry 
+ * args:
+ * @name (string) the blockstack ID
+ * @idAddress (string) the ID address that owns the name
+ * @gaiaHub (string) the URL to the write endpoint to store the name's profile
  */
 function makeZonefile(network: Object, args: Array<string>) {
   const name = args[0];
   const idAddress = args[1];
   const gaiaHub = args[2];
+  let resolver;
 
   if (!idAddress.startsWith('ID-')) {
     throw new Error("ID-address must start with ID-");
+  }
+
+  if (args.length > 3) {
+    resolver = args[3];
   }
 
   const address = idAddress.slice(3);
@@ -592,7 +611,15 @@ function makeZonefile(network: Object, args: Array<string>) {
   }
 
   const zonefile = blockstack.makeProfileZoneFile(name, profileUrl);
-  return Promise.resolve().then(() => zonefile)
+  return Promise.resolve().then(() => {
+    if (!resolver) {
+      return zonefile;
+    }
+
+    // append _resolver record
+    // TODO: zone-file doesn't do this right, so we have to append manually 
+    return `${zonefile.replace(/\n+$/, '')}\n_resolver\tIN\tURI\t10\t1\t"${resolver}"`;
+  });
 }
 
 /*
@@ -2172,11 +2199,12 @@ function zonefilePush(network: Object, args: Array<string>) {
  * @appOrigin (string) the application's origin URL
  */
 function getAppKeys(network: Object, args: Array<string>) {
-  const mnemonic = args[0];
+  const mnemonicPromise = getBackupPhrase(args[0]);
   const idAddress = args[1];
   const origin = args[2];
-  const appKeyInfo = getApplicationKeyInfo(network, mnemonic, idAddress, origin);
-  return Promise.resolve().then(() => JSONStringify(appKeyInfo));
+
+  return mnemonicPromise.then((mnemonic) => JSONStringify(
+    getApplicationKeyInfo(network, mnemonic, idAddress, origin)));
 }
 
 /*
@@ -2186,18 +2214,20 @@ function getAppKeys(network: Object, args: Array<string>) {
  * @max_index (integer) (optional) the profile index maximum
  */
 function getOwnerKeys(network: Object, args: Array<string>) {
-  const mnemonic = args[0];
+  const mnemonicPromise = getBackupPhrase(args[0]);
   let maxIndex = 1;
   if (args.length > 1) {
     maxIndex = parseInt(args[1]);
   }
 
-  let keyInfo = [];
-  for (let i = 0; i < maxIndex; i++) {
-    keyInfo.push(getOwnerKeyInfo(network, mnemonic, i));
-  }
-  
-  return Promise.resolve().then(() => JSONStringify(keyInfo));
+  return mnemonicPromise.then((mnemonic) => {
+    let keyInfo = [];
+    for (let i = 0; i < maxIndex; i++) {
+      keyInfo.push(getOwnerKeyInfo(network, mnemonic, i));
+    }
+ 
+    return JSONStringify(keyInfo);
+  });
 }
 
 /*
@@ -2206,13 +2236,15 @@ function getOwnerKeys(network: Object, args: Array<string>) {
  * @mnemonic (string) the 12-word phrase
  */
 function getPaymentKey(network: Object, args: Array<string>) {
-  const mnemonic = args[0];
+  const mnemonicPromise = getBackupPhrase(args[0]);
   
-  // keep the return value consistent with getOwnerKeys 
-  const keyObj = getPaymentKeyInfo(network, mnemonic);
-  const keyInfo = [];
-  keyInfo.push(keyObj);
-  return Promise.resolve().then(() => JSONStringify(keyInfo));
+  return mnemonicPromise.then((mnemonic) => {
+    // keep the return value consistent with getOwnerKeys 
+    const keyObj = getPaymentKeyInfo(network, mnemonic);
+    const keyInfo = [];
+    keyInfo.push(keyObj);
+    return JSONStringify(keyInfo);
+  });
 }
 
 /*
@@ -2221,18 +2253,18 @@ function getPaymentKey(network: Object, args: Array<string>) {
  * @mnemonic (string) OPTIONAL; the 12-word phrase
  */
 function makeKeychain(network: Object, args: Array<string>) {
-  let mnemonic = args[0];
-  if (!mnemonic) {
-    mnemonic = bip39.generateMnemonic(STRENGTH, crypto.randomBytes);
-  }
+  const mnemonicPromise = (args[0] ? getBackupPhrase(args[0]) : 
+    Promise.resolve().then(() => bip39.generateMnemonic(STRENGTH, crypto.randomBytes)));
 
-  const ownerKeyInfo = getOwnerKeyInfo(network, mnemonic, 0);
-  const paymentKeyInfo = getPaymentKeyInfo(network, mnemonic);
-  return Promise.resolve().then(() => JSONStringify({
-    'mnemonic': mnemonic,
-    'ownerKeyInfo': ownerKeyInfo,
-    'paymentKeyInfo': paymentKeyInfo
-  }));
+  return mnemonicPromise.then((mnemonic) => {
+    const ownerKeyInfo = getOwnerKeyInfo(network, mnemonic, 0);
+    const paymentKeyInfo = getPaymentKeyInfo(network, mnemonic);
+    return JSONStringify({
+      'mnemonic': mnemonic,
+      'ownerKeyInfo': ownerKeyInfo,
+      'paymentKeyInfo': paymentKeyInfo
+    });
+  });
 }
 
 /*
@@ -2687,7 +2719,7 @@ function gaiaPutFile(network: Object, args: Array<string>) {
 }
 
 /*
- * Go in a tail-recursion loop to list a Gaia hub's files
+ * Go in a tail-recursion loop to apply a calback on a Gaia hub's files.
  */
 function gaiaListFilesLoop(hubConfig: Object, page: string | null, 
                            count: number, fileCount: number, callback: (name: string) => boolean) {
@@ -2754,14 +2786,161 @@ function gaiaListFiles(network: Object, args: Array<string>) {
     });
 }
 
+
 /*
- * Set the Gaia hub for an application for a blockstack ID
+ * Group array items into batches
+ */
+function batchify<T>(input: Array<T>, batchSize: number = 50): Array<Array<T>> {
+  const output = []
+  let currentBatch = []
+  for (let i = 0; i < input.length; i++) {
+    currentBatch.push(input[i])
+    if (currentBatch.length >= batchSize) {
+      output.push(currentBatch)
+      currentBatch = []
+    }
+  }
+  if (currentBatch.length > 0) {
+    output.push(currentBatch)
+  }
+  return output
+}
+
+/*
+ * Dump all files from a Gaia hub bucket to a directory on disk.
+ * args:
+ * @hubUrl (string) the URL to the write endpoint of the gaia hub
+ * @appPrivateKey (string) the private key used to authenticate to the gaia hub
+ * @dumpDir (string) the directory to hold the dumped files
+ */
+function gaiaDumpBucket(network: Object, args: Array<string>) {
+  const hubUrl = args[0];
+  const appPrivateKey = args[1];
+  let dumpDir = args[2];
+  if (dumpDir.length === 0) {
+    throw new Error('Invalid directory (not given)');
+  }
+  if (dumpDir[0] !== '/') {
+    // relative path.  make absolute 
+    const cwd = process.realpathSync('.');
+    dumpDir = pathTools.normalize(`${cwd}/${dumpDir}`);
+  }
+
+  mkdirs(dumpDir);
+
+  function downloadFile(hubConfig: Object, fileName: string) : Promise<*> {
+    const gaiaReadUrl = `${hubConfig.url_prefix.replace(/\/+$/, '')}/${hubConfig.address}`;
+    const fileUrl = `${gaiaReadUrl}/${fileName}`;
+    const destPath = `${dumpDir}/${fileName.replace(/\//g, '\\x2f')}`;
+    
+    console.log(`Download ${fileUrl} to ${destPath}`);
+    return fetch(fileUrl)
+      .then((resp) => {
+        if (resp.status !== 200) {
+          throw new Error(`Bad status code for ${fileUrl}: ${resp.status}`);
+        }
+        if (!resp.hasOwnProperty('body') || resp.body === null || resp.body === undefined) {
+          throw new Error(`Did not get a body for ${fileUrl}`);
+        }
+
+        return new Promise((resolve, reject) => {
+          try {
+            const outputFile = fs.createWriteStream(destPath);
+            resp.body.pipe(outputFile);
+            resp.body.on('error', err => {
+              reject(err);
+            });
+            outputFile.on('finish', () => {
+              resolve();
+            });
+            outputFile.on('error', err => {
+              reject(err);
+            });
+          }
+          catch(e) {
+            reject(e);
+          }
+        });
+      });
+  }
+
+  // force mainnet addresses
+  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
+
+  const fileNames = [];
+  let gaiaHubConfig;
+
+  return gaiaConnect(network, hubUrl, appPrivateKey)
+    .then((hubConfig) => {
+      gaiaHubConfig = hubConfig;
+      return gaiaListFilesLoop(hubConfig, null, 0, 0, (name) => {
+        fileNames.push(name);
+        return true;
+      });
+    })
+    .then((fileCount) => {
+      console.log(`Download ${fileCount} files...`);
+      const fileBatches = batchify(fileNames);
+      let filePromiseChain = Promise.resolve();
+      for (let i = 0; i < fileBatches.length; i++) {
+        const filePromises = fileBatches[i].map((fileName) => downloadFile(gaiaHubConfig, fileName));
+        const batchPromise = Promise.all(filePromises);
+        filePromiseChain = filePromiseChain.then(() => batchPromise);
+      }
+
+      return filePromiseChain
+        .then(() => fileCount);
+    });
+}
+
+/*
+ * Restore all of the files in a Gaia bucket dump to a new Gaia hub
+ * args:
+ * @hubUrl (string) the URL to the write endpoint of the new Gaia hub
+ * @appPrivateKey (string) the app private key
+ * @dumpDir (string) the path to the Gaia dump to upload 
+ */
+function gaiaRestoreBucket(network: Object, args: Array<string>) {
+  const hubUrl = args[0];
+  const appPrivateKey = args[1];
+  const dumpDir = args[2];
+
+  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
+  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, hubUrl);
+
+  const fileList = fs.readdirSync(dumpDir);
+  const fileBatches = batchify(fileList, 10);
+
+  // force mainnet addresses 
+  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
+  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+    .then((userData) => {
+      let uploadPromise = Promise.resolve();
+      for (let i = 0; i < fileBatches.length; i++) {
+        const uploadBatchPromises = fileBatches[i].map((fileName) => {
+          const filePath = pathTools.join(dumpDir, fileName);
+          const dataBuf = fs.readFileSync(filePath);
+          const gaiaPath = fileName.replace(/\\x2f/g, '/');
+          return blockstack.putFile(gaiaPath, dataBuf, { encrypt: false, sign: false })
+            .then((urls) => {
+              console.log(`Uploaded ${fileName} to ${urls.join(', ')}`);
+            });
+        });
+        uploadPromise = uploadPromise.then(() => Promise.all(uploadBatchPromises));
+      }
+      return uploadPromise;
+    })
+    .then(() => JSONStringify(fileList.length));
+}
+
+/*
+ * Set the Gaia hub for an application for a blockstack ID.
  * args:
  * @blockstackID (string) the blockstack ID of the user
  * @profileHubUrl (string) the URL to the write endpoint of the user's profile gaia hub
  * @appOrigin (string) the application's Origin
  * @hubUrl (string) the URL to the write endpoint of the app's gaia hub
- * @mnemonic (string) the 12-word backup phrase
+ * @mnemonic (string) the 12-word backup phrase, or the ciphertext of it
  */
 function gaiaSetHub(network: Object, args: Array<string>) {
   network.setCoerceMainnetAddress(true);
@@ -2770,7 +2949,7 @@ function gaiaSetHub(network: Object, args: Array<string>) {
   const ownerHubUrl = args[1];
   const appOrigin = args[2];
   const hubUrl = args[3];
-  const mnemonic = args[4];
+  const mnemonicPromise = getBackupPhrase(args[4]);
 
   const nameInfoPromise = getNameInfoEasy(network, blockstackID)
     .then((nameInfo) => {
@@ -2786,8 +2965,8 @@ function gaiaSetHub(network: Object, args: Array<string>) {
   let ownerPrivateKey;
   let appAddress;
 
-  return Promise.all([nameInfoPromise, profilePromise])
-    .then(([nameInfo, nameProfile]) => {
+  return Promise.all([nameInfoPromise, profilePromise, mnemonicPromise])
+    .then(([nameInfo, nameProfile, mnemonic]) => {
       if (!nameProfile) {
         throw new Error("No profile found");
       }
@@ -2881,42 +3060,24 @@ function addressConvert(network: Object, args: Array<string>) {
 /*
  * Run an authentication daemon on a given port.
  * args:
- * @port (number) the port to listen on 
  * @gaiaHubUrl (string) the write endpoint of your preferred Gaia hub
  * @mnemonic (string) your 12-word phrase, optionally encrypted.  If encrypted, then
  * a password will be prompted.
  */
 function authDaemon(network: Object, args: Array<string>) {
-  const port = parseInt(args[0]);
-  const gaiaHubUrl = args[1];
-  const mnemonicOrCiphertext = args[2];
+  const gaiaHubUrl = args[0];
+  const mnemonicOrCiphertext = args[1];
+  let port = 8888;  // default port
+
+  if (args.length > 2) {
+    port = parseInt(args[2]);
+  }
 
   if (port < 0 || port > 65535) {
     return JSONStringify({ error: 'Invalid port' });
   }
 
-  const mnemonicPromise = Promise.resolve().then(() => {
-    if (mnemonicOrCiphertext.split(/ +/g).length !== 12) {
-      // encrypted 
-      return decryptMnemonic(network, [mnemonicOrCiphertext]);
-    }
-    else {
-      // not encrypted 
-      return mnemonicOrCiphertext;
-    }
-  })
-  .then((mnemonicOrError) => {
-    let errcode = ''
-    try {
-      // might be a JSON string with an error 
-      errcode = JSON.parse(mnemonicOrError).error;
-    }
-    catch (e) {
-      // well-formed mnemonic
-      return mnemonicOrError;
-    }
-    throw new Error(errcode);
-  });
+  const mnemonicPromise = getBackupPhrase(mnemonicOrCiphertext);
 
   return mnemonicPromise
     .then((mnemonic) => {
@@ -3036,13 +3197,15 @@ function decryptMnemonic(network: Object, args: Array<string>) {
  * Global set of commands
  */
 const COMMANDS = {
-  'auth': authDaemon,
+  'authenticator': authDaemon,
   'announce': announce,
   'balance': balance,
   'convert_address': addressConvert,
   'decrypt_keychain': decryptMnemonic,
   'encrypt_keychain': encryptMnemonic,
+  'gaia_dump_bucket': gaiaDumpBucket,
   'gaia_getfile': gaiaGetFile,
+  'gaia_restore_bucket': gaiaRestoreBucket,
   'gaia_putfile': gaiaPutFile,
   'gaia_listfiles': gaiaListFiles,
   'gaia_sethub': gaiaSetHub,
