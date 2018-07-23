@@ -104,11 +104,11 @@
     "ecurve": "^1.0.6",
     "express": "^4.15.0",
     "es6-promise": "^4.2.4",
+    "jsontokens": "^0.7.7",
     "promise": "^7.1.1",
     "request": "^2.79.0",
     "ripemd160": "^2.0.1",
     "triplesec": "^3.0.26",
-    "url-js": "^3.0.2",
     "zone-file": "^0.2.2"
   },
   "engines": {
