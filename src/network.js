@@ -208,7 +208,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
   getNamePrice(name: string) {
     // override with CLI option 
-    if (this.priceUnits) {
+    if (this.priceUnits && this.priceToPay) {
       return new Promise((resolve) => resolve({
         units: String(this.priceUnits),
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
@@ -219,7 +219,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
 
   getNamespacePrice(namespaceID: string) {
     // override with CLI option 
-    if (this.priceUnits) {
+    if (this.priceUnits && this.priceToPay) {
       return new Promise((resolve) => resolve({
         units: String(this.priceUnits),
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
