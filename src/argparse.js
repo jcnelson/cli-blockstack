@@ -126,15 +126,9 @@ const CLI_ARGS = {
       '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n',
       group: 'Peer Services'
     },
-    auth: {
+    authenticator: {
       type: "array",
       items: [
-        {
-          name: 'port',
-          type: 'string',
-          realtype: 'portnum',
-          pattern: '^[0-9]+',
-        },
         {
           name: 'gaiaHub',
           type: 'string',
@@ -144,18 +138,31 @@ const CLI_ARGS = {
         {
           name: 'backup_phrase_or_ciphertext',
           type: 'string',
-          realtype: 'backup_phrase_or_ciphertext',
+          realtype: '12_words_or_ciphertext',
           pattern: '.+',
         },
+        {
+          name: 'port',
+          type: 'string',
+          realtype: 'portnum',
+          pattern: '^[0-9]+',
+        },
       ],
-      minItems: 3,
+      minItems: 2,
       maxItems: 3,
-      help: 'Run an authentication endpoint on the given port for the set of names owned ' +
-      'by the given backup phrase.  Send authenticators the given Gaia hub URL in the auth ' +
-      'response.' +
+      help: 'Run an authentication endpoint for the set of names owned ' +
+      'by the given backup phrase.  Send applications the given Gaia hub URL on sign-in, ' +
+      'so the application will use it to read/write user data.\n' +
       '\n' +
       'You can supply your encrypted backup phrase instead of the raw backup phrase.  If so, ' +
-      'then you will be prompted for your password before any authentication takes place.',
+      'then you will be prompted for your password before any authentication takes place.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export BACKUP_PHRASE="oak indicate inside poet please share dinner monitor glow hire source perfect"\n' +
+      '    $ blockstack-cli authenticator "https://hub.blockstack.org" "$BACKUP_PHRASE"\n' +
+      '    Press Ctrl+C to exit\n' +
+      '    Authentication server started on 8888\n',
       group: 'Authentication',
     },
     balance: {
@@ -187,7 +194,20 @@ const CLI_ARGS = {
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Convert a Bitcoin address to a Stacks address and vice versa.',
+      help: 'Convert a Bitcoin address to a Stacks address and vice versa.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ blockstack-cli convert_address 12qdRgXxgNBNPnDeEChy3fYTbSHQ8nfZfD\n' +
+      '    {\n' +
+      '      "STACKS": "SPA2MZWV9N67TBYVWTE0PSSKMJ2F6YXW7CBE6YPW",\n' +
+      '      "BTC": "12qdRgXxgNBNPnDeEChy3fYTbSHQ8nfZfD"\n' +
+      '    }\n' +
+      '    $ blockstack-cli convert_address SPA2MZWV9N67TBYVWTE0PSSKMJ2F6YXW7CBE6YPW\n' +
+      '    {\n' +
+      '      "STACKS": "SPA2MZWV9N67TBYVWTE0PSSKMJ2F6YXW7CBE6YPW",\n' +
+      '      "BTC": "12qdRgXxgNBNPnDeEChy3fYTbSHQ8nfZfD"\n' +
+      '    }\n',
       group: 'Account Management',
     },
     decrypt_keychain: {
@@ -209,7 +229,14 @@ const CLI_ARGS = {
       minItems: 1,
       maxItems: 2,
       help: 'Decrypt an encrypted backup phrase with a password.  Decrypts to a 12-word ' +
-      'backup phrase if done correctly.  The password will be prompted if not given.',
+      'backup phrase if done correctly.  The password will be prompted if not given.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ # password is "asdf"\n' +
+      '    $ blockstack-cli decrypt_keychain "bfMDtOucUGcJXjZo6vkrZWgEzue9fzPsZ7A6Pl4LQuxLI1xsVF0VPgBkMsnSLCmYS5YHh7R3mNtMmX45Bq9sNGPfPsseQMR0fD9XaHi+tBg=\n' +
+      '    Enter password:\n' +
+      '    section amount spend resemble spray verify night immune tattoo best emotion parrot',
       group: "Key Management",
     },
     encrypt_keychain: {
@@ -231,8 +258,43 @@ const CLI_ARGS = {
       minItems: 1,
       maxItems: 2,
       help: "Encrypt a 12-word backup phrase, which can be decrypted later with the " +
-      "decrypt_backup_phrase command.  The password will be prompted if not given.",
+      "decrypt_backup_phrase command.  The password will be prompted if not given.\n" +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '     $ # password is "asdf"\n' +
+      '     $ blockstack-cli encrypt_keychain "section amount spend resemble spray verify night immune tattoo best emotion parrot"\n' +
+      '     Enter password:\n' +
+      '     Enter password again:\n' +
+      '     M+DnBHYb1fgw4N3oZ+5uTEAua5bAWkgTW/SjmmBhGGbJtjOtqVV+RrLJEJOgT35hBon4WKdGWye2vTdgqDo7+HIobwJwkQtN2YF9g3zPsKk=',
       group: "Key Management",
+    },
+    gaia_dump_bucket: {
+      type: "array",
+      items: [
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+        },
+        {
+          name: 'dump_dir',
+          type: 'string',
+          realtype: 'path',
+          pattern: PATH_PATTERN,
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: 'Download the contents of a Gaia hub bucket to a given directory.',
+      group: "Gaia",
     },
     gaia_getfile: {
       type: "array",
@@ -346,6 +408,33 @@ const CLI_ARGS = {
       help: 'List all the files in a Gaia hub, authenticating with the given app private key.',
       group: 'Gaia',
     },
+    gaia_restore_bucket: {
+      type: "array",
+      items: [
+        {
+          name: 'gaia_hub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
+          name: 'app_private_key',
+          type: 'string',
+          realtype: 'private_key',
+          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+        },
+        {
+          name: 'dump_dir',
+          type: 'string',
+          realtype: 'path',
+          pattern: PATH_PATTERN,
+        },
+      ],
+      minItems: 3,
+      maxItems: 3,
+      help: 'Upload the contents of a Gaia bucket dump to a new Gaia hub.',
+      group: "Gaia",
+    },
     gaia_sethub: {
       type: "array",
       items: [
@@ -374,9 +463,9 @@ const CLI_ARGS = {
           pattern: URL_PATTERN,
         },
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: 'string',
-          realtype: 'backup_phrase',
+          realtype: '12_words_or_ciphertext',
         },
       ],
       minItems: 5,
@@ -453,7 +542,20 @@ const CLI_ARGS = {
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Get the address of a private key or multisig private key bundle.',
+      help: 'Get the address of a private key or multisig private key bundle.  Gives the BTC and STACKS addresses\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ blockstack-cli get_address f5185b9ca93bdcb5753fded3b097dab8547a8b47d2be578412d0687a9a0184cb01\n' +
+      '    {\n' +
+      '      "BTC": "1JFhWyVPpZQjbPcXFtpGtTmU22u4fhBVmq",\n' +
+      '      "STACKS": "SP2YM3J4KQK09V670TD6ZZ1XYNYCNGCWCVVKSDFWQ"\n' +
+      '    }\n' +
+      '    $ blockstack-cli get_address 1,f5185b9ca93bdcb5753fded3b097dab8547a8b47d2be578412d0687a9a0184cb01,ff2ff4f4e7f8a1979ffad4fc869def1657fd5d48fc9cf40c1924725ead60942c01\n' +
+      '    {\n' +
+      '      "BTC": "363pKBhc5ipDws1k5181KFf6RSxhBZ7e3p",\n' +
+      '      "STACKS": "SMQWZ30EXVG6XEC1K4QTDP16C1CAWSK1JSWMS0QN"\n' +
+      '    }',
       group: 'Key Management',
     },
     get_blockchain_record: {
@@ -525,9 +627,9 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: 'string',
-          realtype: 'backup_phrase',
+          realtype: '12_words_or_ciphertext',
         },
         {
           name: 'id_address',
@@ -546,16 +648,35 @@ const CLI_ARGS = {
       maxItems: 3,
       help: 'Get the application private key from a 12-word backup phrase and an ID-address.  ' +
       'This is the private key used to sign data in Gaia, and its address is the Gaia bucket ' +
-      'address.',
+      'address.  If you provide your encrypted backup phrase, you will be asked to decrypt it.\n' +
+      'There are two derivation paths emitted by this command:  a "keyInfo" path and a "legacyKeyInfo"' +
+      'path.  You should use the one that matches the Gaia hub read URL\'s address, if you have already ' +
+      'signed in before.  If not, then you should use the "keyInfo" path when possible.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export BACKUP_PHRASE="one race buffalo dynamic icon drip width lake extra forest fee kit"\n' +
+      '    $ blockstack-cli get_app_keys "$BACKUP_PHRASE" ID-19veSw4r1aUG4GcrZFQUD7YZa1v2es2j6s https://my.cool.dapp\n' +
+      '    {\n' +
+      '      "keyInfo": {\n' +
+      '        "privateKey": "TODO",\n' +
+      '        "address": "TODO"\n' +
+      '      },\n' +
+      '      "legacyKeyInfo": {\n' +
+      '        "privateKey": "90f9ec4e13fb9a00243b4c1510075157229bda73076c7c721208c2edca28ea8b",\n' +
+      '        "address": "1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc"\n' +
+      '      },\n' +
+      '      "ownerKeyIndex": 0\n' +
+      '    }',
       group: 'Key Management',
     },
     get_owner_keys: {
       type: "array",
       items: [
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: "string",
-          realtype: 'backup_phrase',
+          realtype: '12_words_or_ciphertext',
         },
         {
           name: 'index',
@@ -568,21 +689,23 @@ const CLI_ARGS = {
       maxItems: 2,
       help: 'Get the list of owner private keys and ID-addresses from a 12-word backup phrase.  ' +
       'Pass non-zero values for INDEX to generate the sequence of ID-addresses that can be used ' +
-      'to own Blockstack IDs.',
+      'to own Blockstack IDs.  If you provide an encrypted 12-word backup phrase, you will be ' +
+      'asked for your password to decrypt it.',
       group: 'Key Management',
     },
     get_payment_key: {
       type: "array",
       items: [
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: "string",
-          realtype: '12_words',
+          realtype: '12_words_or_ciphertext',
         },
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Get the payment private key from a 12-word backup phrase.',
+      help: 'Get the payment private key from a 12-word backup phrase.  If you provide an ' +
+      'encrypted backup phrase, you will be asked for your password to decrypt it.',
       group: 'Key Management',
     },
     get_zonefile: {
@@ -648,15 +771,16 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase',
+          name: 'backup_phrase_or_ciphertext',
           type: 'string',
-          realtype: '12_word',
+          realtype: '12_words_or_ciphertext',
         },
       ],
       minItems: 0,
       maxItems: 1,
       help: 'Generate the owner and payment private keys, optionally from a given 12-word ' +
-      'backup phrase.  If no backup phrase is given, a new one will be generated.',
+      'backup phrase.  If no backup phrase is given, a new one will be generated.  If you provide ' +
+      'your encrypted backup phrase, you will be asked to decrypt it.',
       group: 'Key Management',
     },
     make_zonefile: {
@@ -680,9 +804,15 @@ const CLI_ARGS = {
           realtype: 'url',
           pattern: '.+',
         },
+        {
+          name: 'resolver_url',
+          type: 'string',
+          realtype: 'url',
+          pattern: '.+',
+        },
       ],
       minItems: 3,
-      maxItems: 3,
+      maxItems: 4,
       help: "Generate a zone file for a Blockstack ID with the given profile URL.  If you know " +
       "the ID-address for the Blockstack ID, the profile URL usually takes the form of:\n" + 
       "\n" +
@@ -1521,29 +1651,29 @@ Options can be:
                         print them to stdout.
 
     -B BURN_ADDR        Use the given namespace burn address instead of the one
-                        obtained from the Blockstack network (requires -i)
+                        obtained from the Blockstack network (DANGEROUS)
 
     -D DENOMINATION     Denominate the price to pay in the given units
-                        (requires -i and -P)
+                        (DANGEROUS)
 
     -C CONSENSUS_HASH   Use the given consensus hash instead of one obtained
-                        from the network (requires -i)
+                        from the network
 
     -F FEE_RATE         Use the given transaction fee rate instead of the one
-                        obtained from the Bitcoin network (requires -i)
+                        obtained from the Bitcoin network
 
     -G GRACE_PERIOD     Number of blocks in which a name can be renewed after it
-                        expires (requires -i)
+                        expires (DANGEROUS)
 
     -H URL              Use an alternative Blockstack Core API endpoint.
 
     -I URL              Use an alternative Blockstack Core Indexer endpoint.
 
     -N PAY2NS_PERIOD    Number of blocks in which a namespace receives the registration
-                        and renewal fees after it is created (requires -i)
+                        and renewal fees after it is created (DANGEROUS)
 
     -P PRICE            Use the given price to pay for names or namespaces
-                        (requires -i)
+                        (DANGEROUS)
 
     -T URL              Use an alternative Blockstack transaction broadcaster.
 `;
@@ -1567,7 +1697,7 @@ function formatHelpString(indent: number, limit: number, helpString: string) : s
       continue;
     }
 
-    if (words[0] === '$') {
+    if (words[0] === '$' || lines[i].substring(0, 4) === '    ') {
       // literal line
       buf += lines[i] + '\n';
       continue;
