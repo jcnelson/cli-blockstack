@@ -6,6 +6,7 @@ const URL = require('url');
 const RIPEMD160 = require('ripemd160');
 const readline = require('readline');
 const stream = require('stream');
+const fs = require('fs');
 
 import {
   parseZoneFile
@@ -25,6 +26,10 @@ import {
 import {
   TransactionSigner
 } from 'blockstack';
+
+import {
+  decryptBackupPhrase
+} from './encrypt';
 
 type UTXO = { value?: number,
               confirmations?: number,
@@ -524,3 +529,66 @@ export function getpass(promptStr: string, cb: (passwd: string) => void) {
 
   return;
 }
+
+/*
+ * Extract a 12-word backup phrase.  If the raw 12-word phrase is given, it will
+ * be returned.  If the ciphertext is given, the user will be prompted for a password
+ * (if a password is not given as an argument).
+ */
+export function getBackupPhrase(backupPhraseOrCiphertext: string, password: ?string) : Promise<string> {
+  if (backupPhraseOrCiphertext.split(/ +/g).length > 1) {
+    // raw backup phrase 
+    return Promise.resolve().then(() => backupPhraseOrCiphertext);
+  }
+  else {
+    // ciphertext 
+    return new Promise((resolve, reject) => {
+      if (!process.stdin.isTTY && !password) {
+        // password must be given 
+        reject(new Error('Password argument required in non-interactive mode'));
+      }
+      else {
+        // prompt password 
+        getpass('Enter password: ', (p) => {
+          resolve(p);
+        });
+      }
+    })
+    .then((pass) => decryptBackupPhrase(Buffer.from(backupPhraseOrCiphertext, 'base64'), pass));
+  }
+}
+
+/*
+ * mkdir -p
+ * path must be absolute
+ */
+export function mkdirs(path: string) : void {
+  if (path.length === 0 || path[0] !== '/') {
+    throw new Error('Path must be absolute');
+  }
+
+  const pathParts = path.replace(/^\//, '').split('/');
+  let tmpPath = '/';
+  for (let i = 0; i <= pathParts.length; i++) {
+    try {
+      const statInfo = fs.lstatSync(tmpPath);
+      if ((statInfo.mode & fs.constants.S_IFDIR) === 0) {
+        throw new Error(`Not a directory: ${tmpPath}`);
+      }
+    }
+    catch (e) {
+      if (e.code === 'ENOENT') {
+        // need to create
+        fs.mkdirSync(tmpPath);
+      }
+      else {
+        throw e;
+      }
+    }
+    if (i === pathParts.length) {
+      break;
+    }
+    tmpPath = `${tmpPath}/${pathParts[i]}`;
+  }
+}
+
