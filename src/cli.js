@@ -2401,17 +2401,17 @@ function sendBTC(network: Object, args: Array<string>) {
     paymentKey = blockstack.PubkeyHashSigner.fromHexString(paymentKeyHex);
   }
   else {
-    // multi-sig 
+    // multi-sig or segwit 
     paymentKey = paymentKeyHex;
   }
 
   const txPromise = blockstack.transactions.makeBitcoinSpend(destinationAddress, paymentKey, amount)
     .catch((e) => {
       if (e.name === 'InvalidAmountError') {
-        return {
+        return JSONStringify({
           'status': false,
           'error': e.message
-        };
+        }, true);
       }
       else {
         throw e;
