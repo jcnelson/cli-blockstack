@@ -1,5 +1,7 @@
 /* @flow */
 
+import logger from 'winston';
+
 const bitcoinjs = require('bitcoinjs-lib');
 const blockstack = require('blockstack');
 const URL = require('url');
@@ -54,7 +56,7 @@ export class MultiSigKeySigner implements TransactionSigner {
           bitcoinjs.crypto.hash160(this.redeemScript),
           blockstack.config.network.layer1.scriptHash)
     } catch (e) {
-      console.log(e.stack)
+      logger.error(e);
       throw new Error('Improper redeem script for multi-sig input.')
     }
   }
@@ -81,15 +83,14 @@ export class SegwitP2SHKeySigner implements TransactionSigner {
   privateKeys: Array<string>
   address: string
   m: number
+
   constructor(redeemScript: string, witnessScript: string, m: number, privateKeys: Array<string>) {
-
-    const scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
-      bitcoinjs.crypto.hash160(redeemScript));
-
-    this.address = bitcoinjs.address.fromOutputScript(
-      scriptPubKey, blockstack.config.network.layer1); 
     this.redeemScript = Buffer.from(redeemScript, 'hex');
     this.witnessScript = Buffer.from(witnessScript, 'hex');
+    this.address = bitcoinjs.address.toBase58Check(
+        bitcoinjs.crypto.hash160(this.redeemScript),
+        blockstack.config.network.layer1.scriptHash)
+   
     this.privateKeys = privateKeys;
     this.m = m;
   }
@@ -100,8 +101,9 @@ export class SegwitP2SHKeySigner implements TransactionSigner {
 
   findUTXO(txIn: bitcoinjs.TransactionBuilder, signingIndex: number, utxos: Array<UTXO>) : UTXO {
     // NOTE: this is O(n*2) complexity for n UTXOs when signing an n-input transaction
-    const txidBuf = new Buffer(txIn.tx.ins[signingIndex].hash.slice());
-    const outpoint = txIn.tx.ins[signingIndex].index;
+    // NOTE: as of bitcoinjs-lib 4.x, the "tx" field is private
+    const txidBuf = new Buffer(txIn.__tx.ins[signingIndex].hash.slice());
+    const outpoint = txIn.__tx.ins[signingIndex].index;
     
     txidBuf.reverse(); // NOTE: bitcoinjs encodes txid as big-endian
     const txid = txidBuf.toString('hex')
@@ -190,9 +192,9 @@ export function parseMultiSigKeys(serializedPrivateKeys: string) : MultiSigKeySi
     return Buffer.from(getPublicKeyFromPrivateKey(pk), 'hex');
   });
 
-  // generate redeem script 
-  const redeemScript = bitcoinjs.script.multisig.output.encode(m, pubkeys);
-  return new MultiSigKeySigner(redeemScript, privkeys);
+  // generate redeem script
+  const multisigInfo = bitcoinjs.payments.p2ms({ m, pubkeys });
+  return new MultiSigKeySigner(multisigInfo.output, privkeys);
 }
 
 
@@ -231,22 +233,22 @@ export function parseSegwitP2SHKeys(serializedPrivateKeys: string) : SegwitP2SHK
 
   // generate redeem script for p2wpkh or p2sh, depending on how many keys 
   let redeemScript;
-  let scriptPubKey;
   let witnessScript = '';
   if (m === 1) {
     // p2wpkh 
-    const pubKeyHash = bitcoinjs.crypto.hash160(pubkeys[0]);
-    redeemScript = bitcoinjs.script.witnessPubKeyHash.output.encode(pubKeyHash);
-    scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
-      bitcoinjs.crypto.hash160(redeemScript));
+    const p2wpkh = bitcoinjs.payments.p2wpkh({ pubkey: pubkeys[0] });
+    const p2sh = bitcoinjs.payments.p2sh({ redeem: p2wpkh });
+
+    redeemScript = p2sh.redeem.output;
   }
   else {
     // p2wsh
-    witnessScript = bitcoinjs.script.multisig.output.encode(m, pubkeys);
-    redeemScript = bitcoinjs.script.witnessScriptHash.output.encode(
-      bitcoinjs.crypto.sha256(witnessScript));
-    scriptPubKey = bitcoinjs.script.scriptHash.output.encode(
-      bitcoinjs.crypto.hash160(redeemScript));
+    const p2ms = bitcoinjs.payments.p2ms({ m, pubkeys });
+    const p2wsh = bitcoinjs.payments.p2wsh({ redeem: p2ms });
+    const p2sh = bitcoinjs.payments.p2sh({ redeem: p2wsh });
+
+    redeemScript = p2sh.redeem.output;
+    witnessScript = p2wsh.redeem.output;
   }
 
   return new SegwitP2SHKeySigner(redeemScript, witnessScript, m, privkeys);
@@ -296,26 +298,12 @@ export function JSONStringify(obj: any, stderr: boolean = false) : string {
 }
 
 /*
- * Get an ECPair public key from a private key
- */
-function getECPairFromPrivateKey(privateKey: string) : ECPair {
-  const compressed = privateKey.substring(64,66) === '01';
-  const publicKey = blockstack.getPublicKeyFromPrivate(
-    privateKey.substring(0,64));
-  const publicKeyBuffer = new Buffer(publicKey, 'hex');
-
-  const Q = ecurve.Point.decodeFrom(secp256k1, publicKeyBuffer);
-  const ecKeyPair = new ECPair(null, Q, { compressed: compressed });
-  return ecKeyPair;
-}
-
-/*
  * Get a private key's public key, while honoring the 01 to compress it.
  * @privateKey (string) the hex-encoded private key
  */
 export function getPublicKeyFromPrivateKey(privateKey: string) : string {
-  const ecKeyPair = getECPairFromPrivateKey(privateKey);
-  return ecKeyPair.getPublicKeyBuffer().toString('hex');
+  const ecKeyPair = blockstack.hexStringToECPair(privateKey);
+  return ecKeyPair.publicKey.toString('hex');
 }
 
 /*
@@ -325,8 +313,8 @@ export function getPublicKeyFromPrivateKey(privateKey: string) : string {
 export function getPrivateKeyAddress(network: Object, privateKey: string | TransactionSigner) 
   : string {
   if (typeof privateKey === 'string') {
-    const ecKeyPair = getECPairFromPrivateKey(privateKey);
-    return network.coerceAddress(ecKeyPair.getAddress());
+    const ecKeyPair = blockstack.hexStringToECPair(privateKey);
+    return network.coerceAddress(blockstack.ecPairToAddress(ecKeyPair));
   }
   else {
     return privateKey.address;
@@ -363,8 +351,7 @@ export function sumUTXOs(utxos: Array<UTXO>) {
  * Hash160 function for zone files
  */
 export function hash160(buff: Buffer) {
-  const sha256 = bitcoinjs.crypto.sha256(buff)
-  return (new RIPEMD160()).update(sha256).digest()
+  return bitcoinjs.crypto.hash160(buff);
 }
 
 /*
@@ -491,7 +478,7 @@ export function nameLookup(network: Object, name: string)
       }
     }
     catch(e) {
-      console.log(e);
+      logger.error(e);
     }
 
     const ret = {
