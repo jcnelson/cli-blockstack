@@ -1,9 +1,13 @@
 /* @flow */
 
 const blockstack = require('blockstack');
+const bitcoin = require('bitcoinjs-lib');
 import process from 'process';
-import bitcoinjs from 'bitcoinjs-lib';
 import fs from 'fs';
+import winston from 'winston'
+import logger from 'winston'
+import expressWinston from 'express-winston'
+import cors from 'cors'
 
 const bigi = require('bigi')
 const URL = require('url')
@@ -54,6 +58,7 @@ import {
 } from './network';
 
 import {
+  gaiaAuth,
   gaiaConnect,
   gaiaUploadProfile,
   gaiaUploadProfileAll,
@@ -120,7 +125,7 @@ function whois(network: Object, args: Array<string>) {
 
             return Object.assign({}, nameInfo, {
               'owner_address': nameInfo.address,
-              'owner_script': bitcoinjs.address.toOutputScript(
+              'owner_script': bitcoin.address.toOutputScript(
                 network.coerceMainnetAddress(nameInfo.address)).toString('hex'),
               'last_transaction_height': lastBlock,
               'block_renewed_at': nameHistory[lastBlock].slice(-1)[0].last_renewed,
@@ -455,7 +460,7 @@ function txRegister(network: Object, args: Array<string>, registerTxOnly: ?boole
     zonefileHash = args[4];
     zonefilePath = null;
 
-    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+    logger.debug(`Using zone file hash ${zonefileHash} instead of zone file`);
   }
 
   if (!!zonefilePath) {
@@ -595,7 +600,7 @@ function makeZonefile(network: Object, args: Array<string>) {
 
   const address = idAddress.slice(3);
   const mainnetAddress = network.coerceMainnetAddress(address);
-  const profileUrl = `${gaiaHub}/hub/${mainnetAddress}/profile.json`;
+  const profileUrl = `${gaiaHub.replace(/\/+$/g, '')}/${mainnetAddress}/profile.json`;
   try {
     checkUrl(profileUrl);
   }
@@ -644,7 +649,7 @@ function update(network: Object, args: Array<string>) {
   if (args.length > 4) {
     zonefileHash = args[4];
     zonefilePath = null;
-    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+    logger.debug(`Using zone file hash ${zonefileHash} instead of zone file`);
   }
 
   if (zonefilePath) {
@@ -880,7 +885,7 @@ function renew(network: Object, args: Array<string>) {
   if (args.length >= 6) {
     zonefileHash = args[5];
     zonefilePath = null;
-    console.log(`Using zone file hash ${zonefileHash} instead of zone file`);
+    logger.debug(`Using zone file hash ${zonefileHash} instead of zone file`);
   }
 
   if (zonefilePath) {
@@ -1463,7 +1468,7 @@ function nameImport(network: Object, args: Array<string>) {
   else if (!zonefileHash && !zonefilePath) {
     // make zone file and hash from gaia hub url
     const mainnetAddress = network.coerceMainnetAddress(recipientAddr);
-    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    const profileUrl = `${gaiaHubUrl}/${mainnetAddress}/profile.json`;
     try {
       checkUrl(profileUrl);
     }
@@ -1818,7 +1823,7 @@ function registerAddr(network: Object, args: Array<string>) {
   }
   else {
     // generate one 
-    const profileUrl = `${gaiaHubUrl}/hub/${mainnetAddress}/profile.json`;
+    const profileUrl = `${gaiaHubUrl.replace(/\/+$/g, '')}/${mainnetAddress}/profile.json`;
     try {
       checkUrl(profileUrl);
     }
@@ -1943,7 +1948,7 @@ function registerSubdomain(network: Object, args: Array<string>) {
   let zonefilePromise = null;
 
   // TODO: fix this once the subdomain registrar will tell us the on-chain name
-  console.log(`WARNING: not yet able to verify that ${registrarUrl} is the registrar ` +
+  logger.warn(`WARNING: not yet able to verify that ${registrarUrl} is the registrar ` +
               `for ${onChainName}; assuming that it is...`);
 
   if (args.length > 4) {
@@ -2195,16 +2200,31 @@ function zonefilePush(network: Object, args: Array<string>) {
  * Get the app private key(s) from a backup phrase and an ID-address
  * args:
  * @mnemonic (string) the 12-word phrase
- * @idAddress (string) the ID-address
+ * @nameOrIDAddress (string) the name or ID-address
  * @appOrigin (string) the application's origin URL
  */
 function getAppKeys(network: Object, args: Array<string>) {
   const mnemonicPromise = getBackupPhrase(args[0]);
-  const idAddress = args[1];
+  const nameOrIDAddress = args[1];
   const origin = args[2];
 
-  return mnemonicPromise.then((mnemonic) => JSONStringify(
-    getApplicationKeyInfo(network, mnemonic, idAddress, origin)));
+  let idAddressPromise;
+  if (nameOrIDAddress.match(ID_ADDRESS_PATTERN)) {
+    idAddressPromise = Promise.resolve().then(() => nameOrIDAddress);
+  }
+  else {
+    // need to look it up 
+    idAddressPromise = network.getNameInfo(nameOrIDAddress)
+      .then((nameInfo) => `ID-${nameInfo.address}`);
+  }
+
+  let idAddress;
+  return idAddressPromise.then((idAddr) => {
+      idAddress = idAddr;
+      return mnemonicPromise;
+    })
+    .then((mnemonic) => JSONStringify(
+      getApplicationKeyInfo(network, mnemonic, idAddress, origin)));
 }
 
 /*
@@ -2385,74 +2405,28 @@ function sendBTC(network: Object, args: Array<string>) {
     paymentKey = paymentKeyHex;
   }
 
-  const txPromise = paymentKey.getAddress().then(
-    (paymentAddress) =>
-      Promise.all([network.getUTXOs(paymentAddress), network.getFeeRate()])
-      .then(([utxos, feeRate]) => {
-        const txB = new bitcoinjs.TransactionBuilder(network.layer1)
-        const destinationIndex = txB.addOutput(destinationAddress, 0)
-
-        const change = blockstack.addUTXOsToFund(txB, utxos, amount, feeRate, false)
-
-        let feesToPay = feeRate * blockstack.estimateTXBytes(txB, 0, 0)
-        const feeForChange = feeRate * (blockstack.estimateTXBytes(txB, 0, 1)) - feesToPay
-
-        // it's worthwhile to add a change output
-        if (change > feeForChange) {
-          feesToPay += feeForChange
-          txB.addOutput(paymentAddress, change - feesToPay)
-        }
-
-        if (amount + feesToPay > sumUTXOs(utxos)) {
-          return {
-            'status': false,
-            'error': 'Not enough balance',
-            'feesToPay': feesToPay,
-            'balance': sumUTXOs(utxos),
-            'amount': amount,
-            'required': amount + feesToPay
-          };
-        }
-
-        // we need to manually set the output values now
-        txB.tx.outs[destinationIndex].value = amount
-
-        // ready to sign.
-        let signingPromise = Promise.resolve()
-        for (let i = 0; i < txB.tx.ins.length; i++) {
-          signingPromise = signingPromise.then(
-            () => paymentKey.signTransaction(txB, i))
-        }
-        return signingPromise.then(() => txB)
-      }))
-    .then((signingTxBOrError) => {
-      if (signingTxBOrError.error) {
-        return signingTxBOrError;
+  const txPromise = blockstack.transactions.makeBitcoinSpend(destinationAddress, paymentKey, amount)
+    .catch((e) => {
+      if (e.name === 'InvalidAmountError') {
+        return {
+          'status': false,
+          'error': e.message
+        };
       }
-      return signingTxBOrError.build().toHex();
+      else {
+        throw e;
+      }
     });
 
   if (txOnly) {
-    return txPromise.then((txOrError) => {
-      if (txOrError.error) {
-        return JSONStringify(txOrError, true);
-      }
-      else {
-        return txOrError;
-      }
-    });
+    return txPromise;
   }
   else {
-    return txPromise.then((txOrError) => {
-      if (txOrError.error) {
-        return JSONStringify(txOrError, true);
-      }
-      else {
-        return network.broadcastTransaction(txOrError)
-          .then((txid) => {
-            return txid;
-          });
-      }
+    return txPromise.then((tx) => {
+      return network.broadcastTransaction(tx);
+    })
+    .then((txid) => {
+      return txid;
     });
   }
 }
@@ -2597,32 +2571,6 @@ function getKeyAddress(network: Object, args: Array<string>) {
   });
 }
 
-/*
- * Set up a session for Gaia.
- * Generate an authentication response like what the browser would do,
- * and store the relevant data to our emulated localStorage.
- */
-function makeGaiaSessionToken(appPrivateKey: string, hubURL: string | null) {  
-  const ownerPrivateKey = '24004db06ef6d26cdd2b0fa30b332a1b10fa0ba2b07e63505ffc2a9ed7df22b4';
-  const transitPrivateKey = 'f33fb466154023aba2003c17158985aa6603db68db0f1afc0fcf1d641ea6c2cb';
-  const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f1' + 
-    '9582124f4b07172eb61187afba4514828f866a8a223e0d5c539b2e38a59ab8bb3';
-
-  window.localStorage.setItem('blockstack-transit-private-key', transitPrivateKey)
-
-  const authResponse = blockstack.makeAuthResponse(
-    ownerPrivateKey,
-    {type: '@Person', accounts: []},
-    null,
-    {},
-    null,
-    appPrivateKey,
-    undefined,
-    transitPublicKey,
-    hubURL);
-
-  return authResponse;
-}
 
 /*
  * Get a file from Gaia.
@@ -2656,12 +2604,9 @@ function gaiaGetFile(network: Object, args: Array<string>) {
     appPrivateKey = 'fda1afa3ff9ef25579edb5833b825ac29fae82d03db3f607db048aae018fe882';
   }
 
-  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
-  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, null);
-
   // force mainnet addresses 
-  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
-  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+  blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
+  return gaiaAuth(appPrivateKey, null)
     .then((userData) => blockstack.getFile(path, {
         decrypt: decrypt,
         verify: verify,
@@ -2704,12 +2649,9 @@ function gaiaPutFile(network: Object, args: Array<string>) {
   
   const data = fs.readFileSync(dataPath);
 
-  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
-  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, hubUrl);
-
   // force mainnet addresses 
-  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
-  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+  blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
+  return gaiaAuth(appPrivateKey, hubUrl)
     .then((userData) => {      
       return blockstack.putFile(gaiaPath, data, { encrypt: encrypt, sign: sign });
     })
@@ -2776,7 +2718,7 @@ function gaiaListFiles(network: Object, args: Array<string>) {
   const appPrivateKey = args[1];
 
   // force mainnet addresses 
-  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
+  blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
   return blockstack.connectToGaiaHub(hubUrl, canonicalPrivateKey(appPrivateKey))
     .then((hubConfig) => {
       return gaiaListFilesLoop(hubConfig, null, 0, 0, (name) => {
@@ -2865,7 +2807,7 @@ function gaiaDumpBucket(network: Object, args: Array<string>) {
   }
 
   // force mainnet addresses
-  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
+  blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
 
   const fileNames = [];
   let gaiaHubConfig;
@@ -2905,15 +2847,12 @@ function gaiaRestoreBucket(network: Object, args: Array<string>) {
   const appPrivateKey = args[1];
   const dumpDir = args[2];
 
-  const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
-  const gaiaSessionToken = makeGaiaSessionToken(appPrivateKey, hubUrl);
-
   const fileList = fs.readdirSync(dumpDir);
   const fileBatches = batchify(fileList, 10);
 
   // force mainnet addresses 
-  blockstack.config.network.layer1 = bitcoinjs.networks.bitcoin;
-  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken)
+  blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
+  return gaiaAuth(appPrivateKey, hubUrl)
     .then((userData) => {
       let uploadPromise = Promise.resolve();
       for (let i = 0; i < fileBatches.length; i++) {
@@ -3084,17 +3023,15 @@ function authDaemon(network: Object, args: Array<string>) {
       noExit = true;
 
       // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
-      const identitiesPromise = getIdentityInfo(network, mnemonic, gaiaHubUrl);
       const authServer = express();
-      let errorMsg;
+      authServer.use(cors())
 
       authServer.get(/^\/auth\/*$/, (req: express.request, res: express.response) => {
-        return identitiesPromise.then((ids) => handleAuth(
-          network, ids, mnemonic, gaiaHubUrl, port, req, res));
+        return handleAuth(network, mnemonic, gaiaHubUrl, port, req, res);
       });
 
       authServer.get(/^\/signin\/*$/, (req: express.request, res: express.response) => {
-        return identitiesPromise.then((ids) => handleSignIn(network, ids, gaiaHubUrl, req, res));
+        return handleSignIn(network, gaiaHubUrl, req, res);
       });
 
       authServer.listen(port, () => console.log(`Authentication server started on ${port}`));
@@ -3277,6 +3214,7 @@ export function CLIMain() {
     receiveFeesPeriod = opts['N'] ? parseInt(opts['N']) : receiveFeesPeriod;
     gracePeriod = opts['G'] ? parseInt(opts['G']) : gracePeriod;
 
+    const debug = opts['d']
     const consensusHash = opts['C'];
     const integration_test = opts['i'];
     const testnet = opts['t'];
@@ -3300,14 +3238,30 @@ export function CLIMain() {
     const networkType = testnet ? 'testnet' : (integration_test ? 'regtest' : 'mainnet');
 
     const configData = loadConfig(configPath, networkType);
+    if (debug) {
+      configData.logConfig.level = 'debug';
+    }
+
+    winston.configure({ transports: [new winston.transports.Console(configData.logConfig)] })
      
+    const cliOpts = {
+      consensusHash,
+      feeRate,
+      namespaceBurnAddress: namespaceBurnAddr,
+      priceToPay,
+      priceUnits,
+      receiveFeesPeriod,
+      gracePeriod,
+      altAPIUrl: (apiUrl ? apiUrl : configData.blockstackAPIUrl),
+      altTransactionBroadcasterUrl: (transactionBroadcasterUrl ? 
+                                     transactionBroadcasterUrl : 
+                                     configData.broadcastServiceUrl),
+      nodeAPIUrl: (nodeAPIUrl ? nodeAPIUrl : configData.blockstackNodeUrl)
+    };
+
     // wrap command-line options
     const blockstackNetwork = new CLINetworkAdapter(
-        getNetwork(configData, (!!BLOCKSTACK_TEST || !!integration_test || !!testnet)),
-        consensusHash, feeRate, namespaceBurnAddr,
-        priceToPay, priceUnits, receiveFeesPeriod, gracePeriod, 
-        apiUrl, transactionBroadcasterUrl,
-        nodeAPIUrl ? nodeAPIUrl : configData.blockstackNodeUrl);
+        getNetwork(configData, (!!BLOCKSTACK_TEST || !!integration_test || !!testnet)), cliOpts);
 
     blockstack.config.network = blockstackNetwork;
     blockstack.config.logLevel = 'error';
