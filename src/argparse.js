@@ -63,18 +63,29 @@ export const PATH_PATTERN = '^[/]+.+$'
 
 export const BOOLEAN_PATTERN = '^(0|1|true|false)$'
 
+const LOG_CONFIG_DEFAULTS = {
+  level: 'warn',
+  handleExceptions: true,
+  timestamp: true,
+  stringify: true,
+  colorize: true,
+  json: true
+}
+
 const CONFIG_DEFAULTS = {
   blockstackAPIUrl: 'https://core.blockstack.org',
   blockstackNodeUrl: 'https://node.blockstack.org:6263',
   broadcastServiceUrl: 'https://broadcast.blockstack.org',
-  utxoServiceUrl: 'https://blockchain.info'
+  utxoServiceUrl: 'https://blockchain.info',
+  logConfig: LOG_CONFIG_DEFAULTS
 };
 
 const CONFIG_REGTEST_DEFAULTS = {
   blockstackAPIUrl: 'http://localhost:16268',
   blockstackNodeUrl: 'http://localhost:16264',
   broadcastServiceUrl: 'http://localhost:16269',
-  utxoServiceUrl: 'http://localhost:18332'
+  utxoServiceUrl: 'http://localhost:18332',
+  logConfig: LOG_CONFIG_DEFAULTS
 };
 
 const PUBLIC_TESTNET_HOST = 'testnet.blockstack.org';
@@ -83,7 +94,8 @@ const CONFIG_TESTNET_DEFAULTS = {
   blockstackAPIUrl: `http://${PUBLIC_TESTNET_HOST}:16268`,
   blockstackNodeUrl: `http://${PUBLIC_TESTNET_HOST}:16264`,
   broadcastServiceUrl: `http://${PUBLIC_TESTNET_HOST}:16269`,
-  utxoServiceUrl: `http://${PUBLIC_TESTNET_HOST}:18332`
+  utxoServiceUrl: `http://${PUBLIC_TESTNET_HOST}:18332`,
+  logConfig: Object.assign({}, LOG_CONFIG_DEFAULTS, { level: 'debug' })
 };
 
 export const DEFAULT_CONFIG_PATH = '~/.blockstack-cli.conf'
@@ -632,10 +644,10 @@ const CLI_ARGS = {
           realtype: '12_words_or_ciphertext',
         },
         {
-          name: 'id_address',
+          name: 'name_or_id_address',
           type: 'string',
-          realtype: 'id-address',
-          pattern: ID_ADDRESS_PATTERN,
+          realtype: 'name-or-id-address',
+          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}|${ID_ADDRESS_PATTERN}`,
         },
         {
           name: 'app_origin',
@@ -646,9 +658,13 @@ const CLI_ARGS = {
       ],
       minItems: 3,
       maxItems: 3,
-      help: 'Get the application private key from a 12-word backup phrase and an ID-address.  ' +
+      help: 'Get the application private key from a 12-word backup phrase and a name or ID-address.  ' +
       'This is the private key used to sign data in Gaia, and its address is the Gaia bucket ' +
-      'address.  If you provide your encrypted backup phrase, you will be asked to decrypt it.\n' +
+      'address.  If you provide your encrypted backup phrase, you will be asked to decrypt it.  ' +
+      'If you provide a name instead of an ID-address, its ID-address will be queried automatically ' +
+      '(note that this means that the name must already be registered).  Note that this command does NOT ' +
+      'verify whether or not the name or ID-address was created by the backup phrase.  You should do this yourself ' +
+      'via the "get_owner_keys" command if you are not sure.\n' +
       'There are two derivation paths emitted by this command:  a "keyInfo" path and a "legacyKeyInfo"' +
       'path.  You should use the one that matches the Gaia hub read URL\'s address, if you have already ' +
       'signed in before.  If not, then you should use the "keyInfo" path when possible.\n' +
@@ -816,9 +832,9 @@ const CLI_ARGS = {
       help: "Generate a zone file for a Blockstack ID with the given profile URL.  If you know " +
       "the ID-address for the Blockstack ID, the profile URL usually takes the form of:\n" + 
       "\n" +
-      "     https://{GAIA_URL_PREFIX}/hub/{ADDRESS}/profile.json\n" +
+      "     {GAIA_URL_PREFIX}/{ADDRESS}/profile.json\n" +
       "\n" +
-      "where {GAIA_URL_PREFIX} is the *read* endpoint of your Gaia hub (e.g. gaia.blockstack.org) and " +
+      "where {GAIA_URL_PREFIX} is the *read* endpoint of your Gaia hub (e.g. https://gaia.blockstack.org/hub) and " +
       "{ADDRESS} is the base58check part of your ID-address (i.e. the string following 'ID-').",
       group: "Peer Services",
     },
@@ -885,7 +901,7 @@ const CLI_ARGS = {
       '\n' +
       '    $ export REVEAL_KEY="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
       '    $ export ID_ADDRESS="ID-18e1bqU7B5qUPY3zJgMLxDnexyStTeSnvV"\n' +
-      '    $ blockstack-cli name_import example.id "$ID_ADDRESS" https://gaia.blockstack.org "$REVEAL_KEY"',
+      '    $ blockstack-cli name_import example.id "$ID_ADDRESS" https://gaia.blockstack.org/hub "$REVEAL_KEY"',
       group: 'Namespace Operations',
     },
     namespace_preorder: {
@@ -1278,7 +1294,7 @@ const CLI_ARGS = {
       'Behind the scenes, this command will generate two ' +
       'transactions, and generate and replicate a zone file with the given Gaia hub read URL ' +
       '(GAIA_URL_PREFIX).  Note that the GAIA_URL_PREFIX argument must correspond to the *read* endpoint of the Gaia hub ' +
-      '(e.g. if you are using Blockstack PBC\'s default Gaia hub, this is "https://gaia.blockstack.org"). ' +
+      '(e.g. if you are using Blockstack PBC\'s default Gaia hub, this is "https://gaia.blockstack.org/hub"). ' +
       'If you know the *write* endpoint of the name owner\'s Gaia hub, you can find the right value for ' +
       'GAIA_URL_PREFIX by running "curl $GAIA_HUB/hub_info".\n' +
       '\n' +
@@ -1299,7 +1315,7 @@ const CLI_ARGS = {
       '\n' +
       '    $ export ID_ADDRESS="ID-18e1bqU7B5qUPY3zJgMLxDnexyStTeSnvV"\n' +
       '    $ export PAYMENT="bfeffdf57f29b0cc1fab9ea197bb1413da2561fe4b83e962c7f02fbbe2b1cd5401"\n' +
-      '    $ blockstack-cli register_addr example.id "$ID_ADDRESS" "$PAYMENT" https://gaia.blockstack.org',
+      '    $ blockstack-cli register_addr example.id "$ID_ADDRESS" "$PAYMENT" https://gaia.blockstack.org/hub',
       group: 'Blockstack ID Management',
     },
     register_subdomain: {
@@ -1638,6 +1654,8 @@ Options can be:
     -c                  Path to a config file (defaults to
                         ${DEFAULT_CONFIG_PATH})
 
+    -d                  Print verbose debugging output
+
     -e                  Estimate the BTC cost of an transaction (in satoshis).
                         Do not generate or send any transactions.
 
@@ -1904,7 +1922,7 @@ export function printUsage() {
  * The key _ is mapped to the non-opts list.
  */
 export function getCLIOpts(argv: Array<string>, 
-                           opts: string = 'eitUxC:F:B:P:D:G:N:H:T:I:') : Object {
+                           opts: string = 'deitUxC:F:B:P:D:G:N:H:T:I:') : Object {
   let optsTable = {};
   let remainingArgv = [];
   let argvBuff = argv.slice(0);
