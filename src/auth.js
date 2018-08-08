@@ -3,10 +3,14 @@
 const blockstack = require('blockstack');
 const jsontokens = require('jsontokens')
 const express = require('express')
+const crypto = require('crypto')
+
+import winston from 'winston'
+import logger from 'winston'
 
 import {
   gaiaConnect,
-  gaiaUploadProfileAll
+  gaiaUploadProfileAll,
 } from './data';
 
 import {
@@ -16,7 +20,9 @@ import {
 
 import {
   nameLookup,
-  makeProfileJWT
+  makeProfileJWT,
+  getPublicKeyFromPrivateKey,
+  canonicalPrivateKey
 } from './utils';
 
 import { 
@@ -24,7 +30,8 @@ import {
 } from 'blockstack';
 
 export const SIGNIN_HEADER = '<html><head></head></body><h2>Blockstack CLI Sign-in</h2><br>'
-export const SIGNIN_FMT = '<p><a href="{authRedirect}">{blockstackID}</a> ({idAddress})</p>'
+export const SIGNIN_FMT_NAME = '<p><a href="{authRedirect}">{blockstackID}</a> ({idAddress})</p>'
+export const SIGNIN_FMT_ID = '<p><a href="{authRedirect}">{idAddress}</a> (anonymous)</p>'
 export const SIGNIN_FOOTER = '</body></html>'
 
 export type NamedIdentityType = {
@@ -36,6 +43,10 @@ export type NamedIdentityType = {
   profileUrl: string,
   gaiaConnection: GaiaHubConfig
 };
+
+// new ecdsa private key each time
+const authTransitKey = crypto.randomBytes(32).toString('hex');
+const authTransitPubkey = getPublicKeyFromPrivateKey(authTransitKey);
 
 /*
  * Make a sign-in link
@@ -53,6 +64,7 @@ function makeSignInLink(network: Object,
                         appKeyInfo.legacyKeyInfo.privateKey :
                         appKeyInfo.keyInfo.privateKey;
 
+  const associationToken = makeAssociationToken(appPrivateKey, id.privateKey)
   const authResponseTmp = blockstack.makeAuthResponse(
     id.privateKey,
     id.profile,
@@ -63,22 +75,34 @@ function makeSignInLink(network: Object,
     undefined,
     authRequest.public_keys[0],
     hubUrl,
-    blockstack.config.network.blockstackAPIUrl
+    blockstack.config.network.blockstackAPIUrl,
+    associationToken
   );
 
   // pass along some helpful data from the authRequest
   const authResponsePayload = jsontokens.decodeToken(authResponseTmp).payload;
   authResponsePayload.metadata = {
+    id: id,
     appOrigin: appOrigin,
     redirect_uri: authRequest.redirect_uri,
-    scopes: authRequest.scopes
+    scopes: authRequest.scopes,
+    salt: crypto.randomBytes(16).toString('hex'),
     // fill in more CLI-specific fields here
   };
 
   const tokenSigner = new jsontokens.TokenSigner('ES256k', id.privateKey);
-  const authResponse = tokenSigner.sign(authResponsePayload);
+  const authResponse = tokenSigner.sign(authResponsePayload)
+
+  // encrypt the auth response in-flight, so a rogue program can't just curl it out
+  const encryptedAuthResponseJSON = blockstack.encryptContent(
+    authResponse, { publicKey: authTransitPubkey })
+  const encryptedAuthResponse = { json: encryptedAuthResponseJSON }
+
+  const encTokenSigner = new jsontokens.TokenSigner('ES256k', authTransitKey)
+  const encAuthResponse = encTokenSigner.sign(encryptedAuthResponse)
+
   return blockstack.updateQueryStringParameter(
-    `http://localhost:${authPort}/signin`, 'authResponse', authResponse);
+    `http://localhost:${authPort}/signin`, 'encAuthResponse', encAuthResponse);
 }
 
 /*
@@ -95,16 +119,30 @@ function makeAuthPage(network: Object,
   let signinBody = SIGNIN_HEADER;
 
   for (let i = 0; i < ids.length; i++) {
-    const signinEntry = SIGNIN_FMT
-      .replace(/{authRedirect}/, makeSignInLink(
-        network,
-        authPort,
-        mnemonic,
-        authRequest,
-        hubUrl,
-        ids[i]))
-      .replace(/{blockstackID}/, ids[i].name)
-      .replace(/{idAddress}/, ids[i].idAddress);
+    let signinEntry
+    if (ids[i].name) {
+      signinEntry = SIGNIN_FMT_NAME
+        .replace(/{authRedirect}/, makeSignInLink(
+          network,
+          authPort,
+          mnemonic,
+          authRequest,
+          hubUrl,
+          ids[i]))
+        .replace(/{blockstackID}/, ids[i].name)
+        .replace(/{idAddress}/, ids[i].idAddress);
+    }
+    else {
+      signinEntry = SIGNIN_FMT_ID
+        .replace(/{authRedirect}/, makeSignInLink(
+          network,
+          authPort,
+          mnemonic,
+          authRequest,
+          hubUrl,
+          ids[i]))
+        .replace(/{idAddress}/, ids[i].idAddress);
+    }
 
     signinBody = `${signinBody}${signinEntry}`;
   }
@@ -125,6 +163,10 @@ function loadNamedIdentitiesLoop(network: Object,
   const ret = [];
 
   // 65536 is a ridiculously huge number
+  if (index > 65536) {
+    throw new Error('Too many names')
+  }
+
   const keyInfo = getOwnerKeyInfo(network, mnemonic, index);
   return network.getNamesOwned(keyInfo.idAddress.slice(3))
     .then((nameList) => {
@@ -156,6 +198,24 @@ export function loadNamedIdentities(network: Object, mnemonic: string)
   return loadNamedIdentitiesLoop(network, mnemonic, 0, []);
 }
 
+
+/*
+ * Generate identity info for an unnamed ID
+ */
+function loadUnnamedIdentity(network: Object, mnemonic: string, index: number): NamedIdentityType {
+  const keyInfo = getOwnerKeyInfo(network, mnemonic, index);
+  const idInfo = {
+    name: '',
+    idAddress: keyInfo.idAddress,
+    privateKey: keyInfo.privateKey,
+    index: index,
+    profile: null,
+    profileUrl: '',
+    gaiaConnection: undefined
+  };
+  return idInfo;
+}
+
 /*
  * Send a JSON HTTP response
  */
@@ -163,6 +223,25 @@ function sendJSON(res: express.response, data: Object, statusCode: number) {
   res.writeHead(statusCode, {'Content-Type' : 'application/json'})
   res.write(JSON.stringify(data))
   res.end()
+}
+
+/*
+ * Make an association token for the given address
+ */
+function makeAssociationToken(appPrivateKey: string, identityKey: string) : string {
+  const appPublicKey = getPublicKeyFromPrivateKey(`${canonicalPrivateKey(appPrivateKey)}01`)
+  const FOUR_MONTH_SECONDS = 60 * 60 * 24 * 31 * 4
+  const salt = crypto.randomBytes(16).toString('hex')
+  const identityPublicKey = getPublicKeyFromPrivateKey(identityKey)
+  const associationTokenClaim = {
+    childToAssociate: appPublicKey,
+    iss: identityPublicKey,
+    exp: FOUR_MONTH_SECONDS + (new Date()/1000),
+    salt 
+  }
+  const associationToken = new jsontokens.TokenSigner('ES256K', identityKey)
+    .sign(associationTokenClaim)
+  return associationToken
 }
 
 /*
@@ -206,8 +285,13 @@ export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: s
         }
       }
 
+      const nextIndex = identities.length + 1
+
       // ignore identities with no data
-      identities = identities.filter((id) => id.profileUrl);
+      identities = identities.filter((id) => !!id.profileUrl);
+
+      // add in the next non-named identity
+      identities.push(loadUnnamedIdentity(network, mnemonic, nextIndex))
       return identities;
     })
     .then((ids) => {
@@ -221,14 +305,18 @@ export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: s
       return Promise.all(gaiaConnectionPromises);
     })
     .then((connections) => {
-      network.setCoerceMainnetAddress(false);
       gaiaConnections = connections;
 
       for (let i = 0; i < connections.length; i++) {
+        // associate this identity with the gaia hub token 
         identities[i].gaiaConnection = connections[i];
       }
 
       return identities;
+    })
+    .catch((e) => {
+      network.setCoerceMainnetAddress(false);
+      throw e;
     });
 
   return identitiesPromise;
@@ -243,8 +331,7 @@ export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: s
  * Serves back an error page on error.
  * Returns a Promise that resolves to nothing.
  */
-export function handleAuth(network: Object, identities: Array<NamedIdentityType>,
-                           mnemonic: string, gaiaHubUrl: string, port: number, 
+export function handleAuth(network: Object, mnemonic: string, gaiaHubUrl: string, port: number, 
                            req: express.request, res: express.response) : Promise<*> {
 
   const authToken = req.query.authRequest;
@@ -255,7 +342,10 @@ export function handleAuth(network: Object, identities: Array<NamedIdentityType>
   }
  
   let errorMsg;
-  return Promise.resolve().then(() => {
+  let identities;
+  return getIdentityInfo(network, mnemonic, gaiaHubUrl)
+    .then((ids) => {
+      identities = ids;
       errorMsg = 'Unable to verify authentication token';
       return blockstack.verifyAuthRequest(authToken);
     })
@@ -285,8 +375,12 @@ export function handleAuth(network: Object, identities: Array<NamedIdentityType>
       return;
     })
     .catch((e) => {
-      console.log(e);
-      console.log(errorMsg)
+      if (!errorMsg) {
+        errorMsg = e.message;
+      }
+
+      logger.error(e)
+      logger.error(errorMsg)
       sendJSON(res, { error: `Unable to authenticate app request: ${errorMsg}` }, 400);
       return;
     });
@@ -304,7 +398,7 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
 
   if (!profile) {
     // instantiate 
-    console.log(`Instantiating profile for ${id.name}`);
+    logger.debug(`Instantiating profile for ${id.name}`);
     needProfileUpdate = true;
     profile = {
       'type': '@Person',
@@ -317,20 +411,20 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
   if (profile.apps === null || profile.apps === undefined) {
     needProfileUpdate = true;
 
-    console.log(`Adding multi-reader Gaia links to profile for ${id.name}`);
+    logger.debug(`Adding multi-reader Gaia links to profile for ${id.name}`);
     profile.apps = {};
   }
 
   if (!profile.apps.hasOwnProperty(appOrigin) || !profile.apps[appOrigin]) {
     needProfileUpdate = true;
-    console.log(`Setting Gaia read URL ${id.gaiaConnection.url_prefix} for ${appOrigin} ` +
+    logger.debug(`Setting Gaia read URL ${id.gaiaConnection.url_prefix} for ${appOrigin} ` +
       `in profile for ${id.name}`);
 
     profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
   }
   else if (profile.apps[appOrigin] !== id.gaiaConnection.url_prefix) {
     needProfileUpdate = true;
-    console.log(`Overriding Gaia read URL for ${appOrigin} from ${profile.apps[appOrigin]} ` +
+    logger.debug(`Overriding Gaia read URL for ${appOrigin} from ${profile.apps[appOrigin]} ` +
       `to ${id.gaiaConnection.url_prefix} in profile for ${id.name}`);
 
     profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
@@ -346,18 +440,20 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
  * verifies it, updates the name's profile's app's entry with the latest Gaia
  * hub information (if necessary), and redirects the user back to the application.
  *
+ * If adminKey is given, then the new app private key will be automatically added
+ * as an authorized writer to the Gaia hub.
+ *
  * Redirects the user on success.
  * Sends the user an error page on failure.
  * Returns a Promise that resolves to nothing.
  */
-export function handleSignIn(network: Object, identities: Array<NamedIdentityType>,
-                             gaiaHubUrl: string, req: express.request, res: express.response)
-  : Promise<*> {
+export function handleSignIn(network: Object, gaiaHubUrl: string,
+                             req: express.request, res: express.response): Promise<*> {
   
-  const authResponse = req.query.authResponse;
-  if (!authResponse) {
+  const encAuthResponse = req.query.encAuthResponse;
+  if (!encAuthResponse) {
     return Promise.resolve().then(() => {
-      sendJSON(res, { error: 'No authResponse given' }, 400);
+      sendJSON(res, { error: 'No encAuthResponse given' }, 400);
     });
   }
   const nameLookupUrl = `${network.blockstackAPIUrl}/v1/names/`;
@@ -370,38 +466,45 @@ export function handleSignIn(network: Object, identities: Array<NamedIdentityTyp
   let appOrigin = null;
   let redirectUri = null;
   let scopes = [];
+  let authResponse
 
   return Promise.resolve().then(() => {
+    // verify and decrypt 
+    const valid = new jsontokens.TokenVerifier('ES256K', authTransitPubkey)
+      .verify(encAuthResponse)
+
+    if (!valid) {
+      throw new Error('Invalid encrypted auth response: not signed by this authenticator')
+    }
+
+    const encAuthResponseToken = jsontokens.decodeToken(encAuthResponse)
+    const encAuthResponsePayload = encAuthResponseToken.payload;
+    
+    authResponse = blockstack.decryptContent(
+      encAuthResponsePayload.json, { privateKey: authTransitKey });
+
     return blockstack.verifyAuthResponse(authResponse, nameLookupUrl);
   })
   .then((valid) => {
     if (!valid) {
-      errorMsg = 'Unable to verify authResponse token';
+      errorMsg = `Unable to verify authResponse token ${authResponse}`;
       throw new Error(errorMsg);
     }
 
     const authResponseToken = jsontokens.decodeToken(authResponse);
     authResponsePayload = authResponseToken.payload;
 
-    // find name and profile we're signing in as
-    for (let i = 0; i < identities.length; i++) {
-      if (identities[i].name === authResponsePayload.username) {
-        id = identities[i];
+    id = authResponsePayload.metadata.id;
+    appOrigin = authResponsePayload.metadata.appOrigin;
+    redirectUri = authResponsePayload.metadata.redirect_uri;
+    scopes = authResponsePayload.metadata.scopes;
 
-        appOrigin = authResponsePayload.metadata.appOrigin;
-        redirectUri = authResponsePayload.metadata.redirect_uri;
-        scopes = authResponsePayload.metadata.scopes;
-
-        console.log(`App ${appOrigin} requests scopes ${JSON.stringify(scopes)}`);
-        break;
-      }
-    }
-
-    if (!id || !appOrigin || !redirectUri) {
-      errorMsg = 'Auth response was not generated by this authenticator';
-      throw new Error(errorMsg);
-    }
+    // remove sensitive information
+    delete authResponsePayload.metadata;
+    authResponse = new jsontokens.TokenSigner('ES256K', id.privateKey).sign(authResponsePayload);
     
+    logger.debug(`App ${appOrigin} requests scopes ${JSON.stringify(scopes)}`);
+
     const newProfileData = updateProfileApps(id, appOrigin);
     const profile = newProfileData.profile;
     const needProfileUpdate = newProfileData.changed && scopes.includes('store_write');
@@ -409,13 +512,13 @@ export function handleSignIn(network: Object, identities: Array<NamedIdentityTyp
     // sign and replicate new profile if we need to.
     // otherwise do nothing 
     if (needProfileUpdate) {
-      console.log(`Upload new profile to ${gaiaHubUrl}`);
+      logger.debug(`Upload new profile to ${gaiaHubUrl}`);
       const profileJWT = makeProfileJWT(profile, id.privateKey);
       return gaiaUploadProfileAll(
         network, [gaiaHubUrl], 'profile.json', profileJWT, id.privateKey);
     }
     else {
-      console.log(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
+      logger.debug(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
       return { dataUrls: [], error: null };
     }
   })
@@ -434,8 +537,8 @@ export function handleSignIn(network: Object, identities: Array<NamedIdentityTyp
     return;
   })
   .catch((e) => {
-    console.log(e);
-    console.log(errorMsg)
+    logger.error(e);
+    logger.error(errorMsg);
     sendJSON(res, { error: `Unable to process signin request: ${errorMsg}` }, errorStatusCode);
     return;
   });
