@@ -2,6 +2,7 @@
 
 const blockstack = require('blockstack');
 const jsontokens = require('jsontokens');
+const bitcoin = require('bitcoinjs-lib');
 const URL = require('url');
 
 import {
@@ -11,9 +12,57 @@ import {
   SafetyError
 } from './utils';
 
+
 /*
- * Connect to Gaia hub.  Make sure we use a mainnet address always, even in test mode
- * (works around a bug in some versions of blockstack.js)
+ * Set up a session for Gaia.
+ * Generate an authentication response like what the browser would do,
+ * and store the relevant data to our emulated localStorage.
+ */
+function makeFakeGaiaSessionToken(appPrivateKey: string | null, hubURL: string | null) {  
+  const ownerPrivateKey = '24004db06ef6d26cdd2b0fa30b332a1b10fa0ba2b07e63505ffc2a9ed7df22b4';
+  const transitPrivateKey = 'f33fb466154023aba2003c17158985aa6603db68db0f1afc0fcf1d641ea6c2cb';
+  const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f1' + 
+    '9582124f4b07172eb61187afba4514828f866a8a223e0d5c539b2e38a59ab8bb3';
+
+  window.localStorage.setItem('blockstack-transit-private-key', transitPrivateKey)
+
+  const authResponse = blockstack.makeAuthResponse(
+    ownerPrivateKey,
+    {type: '@Person', accounts: []},
+    null,
+    {},
+    null,
+    appPrivateKey,
+    undefined,
+    transitPublicKey,
+    hubURL);
+
+  return authResponse;
+}
+
+
+/*
+ * Authenticate to Gaia.  Used for reading, writing, and listing files.
+ * Process a (fake) session token and set up a Gaia hub connection.
+ * Returns a Promise that resolves to the (fake) userData
+ */
+export function gaiaAuth(appPrivateKey: string | null, hubUrl: string | null) {
+  // Gaia speaks mainnet only!
+  if (!blockstack.config.network.isMainnet()) {
+    throw new Error('Gaia only works with mainnet networks.');
+  }
+
+  const gaiaSessionToken = makeFakeGaiaSessionToken(appPrivateKey, hubUrl);
+  const nameLookupUrl = `${blockstack.config.network.blockstackAPIUrl}/v1/names/`;
+  return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken);
+}
+
+
+/*
+ * Connect to Gaia hub and generate a hub config.
+ * Used for reading and writing profiles.
+ * Make sure we use a mainnet address always, even in test mode.
+ * Returns a Promise that resolves to a GaiaHubConfig
  */
 export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: string) {
   const addressMainnet = network.coerceMainnetAddress(
@@ -38,6 +87,7 @@ export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: str
       return hubConfig;
     });
 }
+
 
 /*
  * Upload profile data to a Gaia hub
@@ -133,3 +183,4 @@ export function makeZoneFileFromGaiaUrl(network: Object, name: string,
       return blockstack.makeProfileZoneFile(name, profileUrl);
     });
 }
+
