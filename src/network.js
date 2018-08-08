@@ -23,28 +23,33 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   priceUnits: string | null
   gracePeriod: number | null
 
-  constructor(network: blockstack.network.BlockstackNetwork, consensusHash: string | null,
-              feeRate: number | null, namespaceBurnAddress: string | null,
-              priceToPay: number | null, priceUnits: string | null, 
-              receiveFeesPeriod: number | null, gracePeriod: number | null,
-              altAPIUrl: string | null, altTransactionBroadcasterUrl: string | null,
-              nodeAPIUrl: string | null) {
+  constructor(network: blockstack.network.BlockstackNetwork, opts: Object) {
+    const optsDefault = {
+      consensusHash: null,
+      feeRate: null,
+      namesspaceBurnAddress: null,
+      priceToPay: null,
+      priceUnits: null,
+      receiveFeesPeriod: null,
+      gracePeriod: null,
+      altAPIUrl: network.blockstackAPIUrl,
+      altTransactionBroadcasterUrl: network.broadcastServiceUrl,
+      nodeAPIUrl: null
+    }
 
-    const apiUrl = altAPIUrl ? altAPIUrl : network.blockstackAPIUrl;
-    const txbUrl = altTransactionBroadcasterUrl ? 
-                   altTransactionBroadcasterUrl : 
-                   network.broadcastServiceUrl;
+    opts = Object.assign({}, optsDefault, opts);
 
-    super(apiUrl, txbUrl, network.btc, network.layer1)
-    this.consensusHash = consensusHash
-    this.feeRate = feeRate
-    this.namespaceBurnAddress = namespaceBurnAddress
-    this.priceToPay = priceToPay
-    this.priceUnits = priceUnits
-    this.receiveFeesPeriod = receiveFeesPeriod
-    this.gracePeriod = gracePeriod
+    super(opts.altAPIUrl, opts.altTransactionBroadcasterUrl, network.btc, network.layer1)
+    this.consensusHash = opts.consensusHash
+    this.feeRate = opts.feeRate
+    this.namespaceBurnAddress = opts.namespaceBurnAddress
+    this.priceToPay = opts.priceToPay
+    this.priceUnits = opts.priceUnits
+    this.receiveFeesPeriod = opts.receiveFeesPeriod
+    this.gracePeriod = opts.gracePeriod
+    this.nodeAPIUrl = opts.nodeAPIUrl
+    
     this.optAlwaysCoerceAddress = false
-    this.nodeAPIUrl = nodeAPIUrl
   }
 
   isMainnet() : boolean {
@@ -229,7 +234,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
-    // TODO: update getNamespaceBurnAddress() to take an optional receive-fees-period
     // override with CLI option
     if (this.namespaceBurnAddress && useCLI) {
       return new Promise((resolve) => resolve(this.namespaceBurnAddress))
