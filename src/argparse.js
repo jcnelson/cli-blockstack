@@ -1420,7 +1420,13 @@ const CLI_ARGS = {
       ],
       minItems: 3,
       maxItems: 3,
-      help: 'Send some Bitcoin (in satoshis) from a payment key to an address.',
+      help: 'Send some Bitcoin (in satoshis) from a payment key to an address.  Up to the given ' +
+      'amount will be spent, but likely less---the actual amount sent will be the amount given, ' +
+      'minus the transaction fee.  For example, if you want to send 10000 satoshis but the ' +
+      'transaction fee is 2000 satoshis, then the resulting transaction will send 8000 satoshis ' +
+      'to the given address.  This is to ensure that this command does not *over*-spend your ' +
+      'Bitcoin.  If you want to check the amount before spending, pass the -x flag to see the ' +
+      'raw transaction.',
       group: 'Account Management'
     },
     send_tokens: {
