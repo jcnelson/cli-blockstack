@@ -3002,6 +3002,7 @@ function addressConvert(network: Object, args: Array<string>) {
  * @gaiaHubUrl (string) the write endpoint of your preferred Gaia hub
  * @mnemonic (string) your 12-word phrase, optionally encrypted.  If encrypted, then
  * a password will be prompted.
+ * @port (number) the port to listen on (optional)
  */
 function authDaemon(network: Object, args: Array<string>) {
   const gaiaHubUrl = args[0];
