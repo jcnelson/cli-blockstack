@@ -40,11 +40,11 @@ class IdentityAddressOwnerNode {
   }
 
   getIdentityKey() {
-    return this.hdNode.keyPair.d.toBuffer(32).toString('hex')
+    return toPrivkeyHex(this.hdNode)
   }
 
   getIdentityKeyID() {
-    return this.hdNode.keyPair.getPublicKeyBuffer().toString('hex')
+    return this.hdNode.publicKey.toString('hex')
   }
 
   getAppsNode() {
@@ -52,7 +52,7 @@ class IdentityAddressOwnerNode {
   }
 
   getAddress() {
-    return this.hdNode.getAddress()
+    return getPrivateKeyAddress(blockstack.config.network, this.getIdentityKey())
   }
 
   getEncryptionNode() {
@@ -71,10 +71,10 @@ class IdentityNode{
     this.key = key;
   }
   getAddress() : string {
-    return this.key.keyPair.getAddress();
+    return getPrivateKeyAddress(blockstack.config.network, this.getSKHex())
   }
   getSKHex() : string {
-    return this.key.keyPair.d.toBuffer(32).toString('hex');
+    return toPrivkeyHex(this.key)
   }
 }
 
@@ -119,19 +119,15 @@ function getIdentityKey09to10(pK : Object, index : number = 0){
        .derive(0));
 }
 
-function toAddress(k : Object) : string {
-  return k.key.keyPair.getAddress();
-}
-
 function toPrivkeyHex(k : Object) : string {
-  return k.key.keyPair.d.toHex() + '01';
+  return `${k.privateKey.toString('hex')}01`;
 }
 
 function getIdentityKeyPre09(mnemonic : string) : IdentityNode {
   // on browser branch, v09 was commit -- 848d1f5445f01db1e28cde4a52bb3f22e5ca014c
   const pK = keychains.PrivateKeychain.fromMnemonic(mnemonic);
   const identityKey = pK.privatelyNamedChild('blockstack-0');
-  const secret = identityKey.ecPair.d;
+  const secret = identityKey.privateKey;
   const keyPair = new bitcoin.ECPair(secret, false, {"network" :
                                                     bitcoin.networks.bitcoin});
   return new IdentityNode({ keyPair });
@@ -139,7 +135,7 @@ function getIdentityKeyPre09(mnemonic : string) : IdentityNode {
 
 function getMaster(mnemonic : string) {
   const seed = bip39.mnemonicToSeed(mnemonic);
-  return bitcoin.HDNode.fromSeedBuffer(seed);
+  return bitcoin.bip32.fromSeed(seed);
 }
 
 
@@ -165,11 +161,11 @@ export class AppNode {
   }
 
   getAppPrivateKey() {
-    return this.hdNode.keyPair.d.toBuffer(32).toString('hex')
+    return toPrivkeyHex(this.hdNode)
   }
 
   getAddress() {
-    return this.hdNode.getAddress()
+    return getPrivateKeyAddress(blockstack.config.network, toPrivkeyHex(this.hdNode))
   }
 }
 
@@ -219,7 +215,8 @@ export function getIdentityOwnerAddressNode(
     throw new Error('You need the private key to generate identity addresses')
   }
 
-  const publicKeyHex = identityPrivateKeychain.keyPair.getPublicKeyBuffer().toString('hex')
+  // const publicKeyHex = identityPrivateKeychain.keyPair.getPublicKeyBuffer().toString('hex')
+  const publicKeyHex = identityPrivateKeychain.publicKey.toString('hex')
   const salt = crypto
     .createHash('sha256')
     .update(publicKeyHex)
@@ -261,8 +258,8 @@ export function getOwnerKeyInfo(network: Object,
                                 index : number, 
                                 version : string = 'v0.10-current') {
   const identity = getIdentityNodeFromPhrase(mnemonic, index, version);
-  const addr = network.coerceAddress(toAddress(identity));
-  const privkey = toPrivkeyHex(identity);
+  const addr = network.coerceAddress(identity.getAddress());
+  const privkey = identity.getSKHex();
   return {
     privateKey: privkey,
     version: version,
@@ -281,9 +278,9 @@ export function getOwnerKeyInfo(network: Object,
  *    .address (string) the address of the private key
  */
 export function getPaymentKeyInfo(network: Object, mnemonic : string) {
-  const identity = getIdentityNodeFromPhrase(mnemonic, 0, 'current-btc');
-  const addr = network.coerceAddress(identity.keyPair.getAddress());
-  const privkey = identity.keyPair.d.toHex() + '01';
+  const identityHDNode = getIdentityNodeFromPhrase(mnemonic, 0, 'current-btc');
+  const privkey = toPrivkeyHex(identityHDNode);
+  const addr = getPrivateKeyAddress(network, privkey);
   return {
     privateKey: privkey,
     address: {
@@ -310,7 +307,7 @@ export function findIdentityIndex(network: Object, mnemonic: string, idAddress: 
 
   for (let i = 0; i < maxIndex; i++) {
     const identity = getIdentityNodeFromPhrase(mnemonic, i, 'v0.10-current');
-    if (network.coerceAddress(toAddress(identity)) === 
+    if (network.coerceAddress(identity.getAddress()) ===
         network.coerceAddress(idAddress.slice(3))) {
       return i;
     }
@@ -359,8 +356,11 @@ export function getApplicationKeyInfo(network: Object,
   const identityInfo = deriveIdentityKeyPair(identityOwnerAddressNode);
   const appsNodeKey = identityInfo.appsNodeKey;
   const salt = identityInfo.salt;
-  const appsNode = new AppsNode(bitcoin.HDNode.fromBase58(appsNodeKey), salt);
-  const appPrivateKey = appsNode.getAppNode(appDomain).getAppPrivateKey();
+  const appsNode = new AppsNode(bitcoin.bip32.fromBase58(appsNodeKey), salt);
+
+  // NOTE: we don't include the 'compressed' flag for app private keys, even though
+  // the app address is the hash of the compressed public key.
+  const appPrivateKey = appsNode.getAppNode(appDomain).getAppPrivateKey().substring(0,64);
 
   const res = {
     keyInfo: {
