@@ -226,7 +226,8 @@ function sendJSON(res: express.response, data: Object, statusCode: number) {
 }
 
 /*
- * Make an association token for the given address
+ * Make an association token for the given address.
+ * TODO belongs in a "gaia.js" library
  */
 function makeAssociationToken(appPrivateKey: string, identityKey: string) : string {
   const appPublicKey = getPublicKeyFromPrivateKey(`${canonicalPrivateKey(appPrivateKey)}01`)
@@ -435,8 +436,8 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
 
 
 /*
- * Handle GET /signin?authResponse=...
- * Takes an authResponse from the page generated on GET /auth?authRequest=....,
+ * Handle GET /signin?encAuthResponse=...
+ * Takes an encrypted authResponse from the page generated on GET /auth?authRequest=....,
  * verifies it, updates the name's profile's app's entry with the latest Gaia
  * hub information (if necessary), and redirects the user back to the application.
  *
