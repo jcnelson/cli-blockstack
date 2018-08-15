@@ -60,7 +60,6 @@ import {
 import {
   gaiaAuth,
   gaiaConnect,
-  gaiaUploadProfile,
   gaiaUploadProfileAll,
   makeZoneFileFromGaiaUrl
 } from './data';
@@ -1971,7 +1970,7 @@ function registerSubdomain(network: Object, args: Array<string>) {
       // sign and upload profile
       const signedProfileData = makeProfileJWT(emptyProfile, ownerKey);
       return gaiaUploadProfileAll(
-        network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
+        network, [gaiaHubUrl], signedProfileData, ownerKey);
     })
     .then((gaiaUrls) => {
       if (gaiaUrls.hasOwnProperty('error')) {
@@ -2139,6 +2138,7 @@ function profileStore(network: Object, args: Array<string>) {
   let ownerAddressMainnet = network.coerceMainnetAddress(ownerAddress);
 
   let nameInfoPromise = null;
+  let name;
 
   if (nameOrAddress.startsWith('ID-')) {
     // ID-address
@@ -2151,6 +2151,7 @@ function profileStore(network: Object, args: Array<string>) {
   else {
     // name; find the address 
     nameInfoPromise = getNameInfoEasy(network, nameOrAddress);
+    name = nameOrAddress;
   }
   
   const verifyProfilePromise = profileVerify(network, 
@@ -2164,7 +2165,7 @@ function profileStore(network: Object, args: Array<string>) {
           `private key address ${ownerAddress}`);
       }
       return gaiaUploadProfileAll(
-        network, [gaiaHubUrl], 'profile.json', signedProfileData, privateKey);
+        network, [gaiaHubUrl], signedProfileData, privateKey, name);
     })
     .then((gaiaUrls) => {
       if (gaiaUrls.hasOwnProperty('error')) {
@@ -2781,23 +2782,22 @@ function gaiaDumpBucket(network: Object, args: Array<string>) {
         if (resp.status !== 200) {
           throw new Error(`Bad status code for ${fileUrl}: ${resp.status}`);
         }
-        if (!resp.hasOwnProperty('body') || resp.body === null || resp.body === undefined) {
-          throw new Error(`Did not get a body for ${fileUrl}`);
+        
+        // javascript can be incredibly stupid at fetching data despite being a Web language...
+        const contentType = resp.headers.get('Content-Type')
+        if (contentType === null
+            || contentType.startsWith('text')
+            || contentType === 'application/json') {
+          return resp.text()
+        } else {
+          return resp.arrayBuffer()
         }
-
+      })
+      .then((filebytes) => {
         return new Promise((resolve, reject) => {
           try {
-            const outputFile = fs.createWriteStream(destPath);
-            resp.body.pipe(outputFile);
-            resp.body.on('error', err => {
-              reject(err);
-            });
-            outputFile.on('finish', () => {
-              resolve();
-            });
-            outputFile.on('error', err => {
-              reject(err);
-            });
+            fs.writeFileSync(destPath, Buffer.from(filebytes), { encoding: null, mode: 0o660 });
+            resolve();
           }
           catch(e) {
             reject(e);
@@ -2861,8 +2861,8 @@ function gaiaRestoreBucket(network: Object, args: Array<string>) {
           const dataBuf = fs.readFileSync(filePath);
           const gaiaPath = fileName.replace(/\\x2f/g, '/');
           return blockstack.putFile(gaiaPath, dataBuf, { encrypt: false, sign: false })
-            .then((urls) => {
-              console.log(`Uploaded ${fileName} to ${urls.join(', ')}`);
+            .then(url => {
+              console.log(`Uploaded ${fileName} to ${url}`);
             });
         });
         uploadPromise = uploadPromise.then(() => Promise.all(uploadBatchPromises));
@@ -2959,7 +2959,7 @@ function gaiaSetHub(network: Object, args: Array<string>) {
       // sign the new profile
       const signedProfile = makeProfileJWT(profile, ownerPrivateKey); 
       return gaiaUploadProfileAll(
-        network, [ownerHubUrl], 'profile.json', signedProfile, ownerPrivateKey);
+        network, [ownerHubUrl], signedProfile, ownerPrivateKey, blockstackID);
     })
     .then((profileUrls) => {
       return JSONStringify({
