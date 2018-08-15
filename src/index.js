@@ -25,11 +25,7 @@ global['window'] = {
 
 global['localStorage'] = global['window'].localStorage
 
-// isomorphic-fetch requires an old version of node-fetch, which we can't use
-// since we need response.body.arrayBuffer() support (i.e. node-fetch 2.x).
-global['fetch'] = require('cross-fetch')
-global['Headers'] = global['fetch'].Headers
-global['Request'] = global['fetch'].Request
-global['Response'] = global['fetch'].Response
+// cross-fetch overrides
+import fetch from 'cross-fetch'
 
 require('.').CLIMain()
