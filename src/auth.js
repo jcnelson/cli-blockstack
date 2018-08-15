@@ -516,7 +516,7 @@ export function handleSignIn(network: Object, gaiaHubUrl: string,
       logger.debug(`Upload new profile to ${gaiaHubUrl}`);
       const profileJWT = makeProfileJWT(profile, id.privateKey);
       return gaiaUploadProfileAll(
-        network, [gaiaHubUrl], 'profile.json', profileJWT, id.privateKey);
+        network, [gaiaHubUrl], profileJWT, id.privateKey, id.name);
     }
     else {
       logger.debug(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
