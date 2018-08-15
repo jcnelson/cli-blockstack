@@ -12,6 +12,9 @@ import {
   SafetyError
 } from './utils';
 
+import {
+  parseZoneFile
+} from 'zone-file';
 
 /*
  * Set up a session for Gaia.
@@ -88,36 +91,103 @@ export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: str
     });
 }
 
+/*
+ * Find the profile.json path for a name
+ * @network (object) the network to use
+ * @blockstackID (string) the blockstack ID to query
+ *
+ * Returns a Promise that resolves to the filename to use for the profile
+ * Throws an exception if the profile URL could not be determined
+ */
+function gaiaFindProfileName(network: Object,
+                             hubConfig: Object,
+                             blockstackID?: string
+): Promise<string> {
+  if (blockstackID === null || blockstackID === undefined) {
+    return Promise.resolve().then(() => 'profile.json')
+  }
+  else {
+    return network.getNameInfo(blockstackID)
+      .then((nameInfo) =>  {
+        let profileUrl;
+        try {
+          const zonefileJSON = parseZoneFile(nameInfo.zonefile);
+          if (zonefileJSON.uri && zonefileJSON.hasOwnProperty('$origin')) {
+            profileUrl = blockstack.getTokenFileUrl(zonefileJSON);
+          }
+        }
+        catch(e) {
+          throw new Error(`Could not determine profile URL for ${String(blockstackID)}: could not parse zone file`);
+        }
+
+        if (profileUrl === null || profileUrl === undefined) {
+          throw new Error(`Could not determine profile URL for ${String(blockstackID)}: no URL in zone file`);
+        }
+
+        // profile URL must match Gaia hub's URL prefix and address 
+        const gaiaReadPrefix = `${hubConfig.url_prefix}${hubConfig.address}`;
+        if (!profileUrl.startsWith(gaiaReadPrefix)) {
+          throw new Error(`Could not determine profile URL for ${String(blockstackID)}: wrong Gaia hub`);
+        }
+
+        const profilePath = profileUrl.substring(gaiaReadPrefix.length + 1);
+        return profilePath;
+      })
+  }
+}
+
 
 /*
- * Upload profile data to a Gaia hub
+ * Upload profile data to a Gaia hub.
+ *
+ * Legacy compat:
+ * If a blockstack ID is given, then the zone file will be queried and the profile URL
+ * inspected to make sure that we handle the special (legacy) case where a profile.json
+ * file got stored to $GAIA_URL/$ADDRESS/$INDEX/profile.json (where $INDEX is a number).
+ * In such cases, the profile will be stored to $INDEX/profile.json, instead of just
+ * profile.json.
+ * 
+ * @network (object) the network to use
  * @gaiaHubUrl (string) the base scheme://host:port URL to the Gaia hub
  * @gaiaData (string) the data to upload
  * @privateKey (string) the private key to use to sign the challenge
+ * @blockstackID (string) optional; the blockstack ID for which this profile will be stored.
  */
 export function gaiaUploadProfile(network: Object,
                                   gaiaHubURL: string, 
-                                  gaiaPath: string,
                                   gaiaData: string,
-                                  privateKey: string) {
+                                  privateKey: string,
+                                  blockstackID?: string
+) {
+  let hubConfig;
   return gaiaConnect(network, gaiaHubURL, privateKey)
-    .then((hubConfig) => {
-      return blockstack.uploadToGaiaHub(gaiaPath, gaiaData, hubConfig);
+    .then((hubconf) => {
+      // make sure we use the *right* gaia path.
+      // if the blockstackID is given, then we should inspect the zone file to
+      // determine if the Gaia profile URL contains an index.  If it does, then 
+      // we need to preserve it!
+      hubConfig = hubconf;
+      return gaiaFindProfileName(network, hubConfig, blockstackID);
+    })
+    .then((profilePath) => {
+      return blockstack.uploadToGaiaHub(profilePath, gaiaData, hubConfig);
     });
 }
 
 /*
- * Upload profile data to all Gaia hubs, given a zone file
+ * Upload profile data to all Gaia hubs, given a zone file.
  * @network (object) the network to use
  * @gaiaUrls (array) list of Gaia URLs
- * @gaiaPath (string) the path to the file to store in Gaia
  * @gaiaData (string) the data to store
  * @privateKey (string) the hex-encoded private key
  * @return a promise with {'dataUrls': [urls to the data]}, or {'error': ...}
  */
-export function gaiaUploadProfileAll(network: Object, gaiaUrls: Array<string>, gaiaPath: string, 
-  gaiaData: string, privateKey: string) : Promise<*> {
-
+export function gaiaUploadProfileAll(network: Object,
+                                     gaiaUrls: Array<string>,
+                                     gaiaData: string,
+                                     privateKey: string,
+                                     blockstackID?: string
+) : Promise<*> {
   const sanitizedGaiaUrls = gaiaUrls.map((gaiaUrl) => {
     const urlInfo = URL.parse(gaiaUrl);
     if (!urlInfo.protocol) {
@@ -132,7 +202,7 @@ export function gaiaUploadProfileAll(network: Object, gaiaUrls: Array<string>, g
   .filter((gaiaUrl) => gaiaUrl.length > 0);
 
   const uploadPromises = sanitizedGaiaUrls.map((gaiaUrl) => 
-    gaiaUploadProfile(network, gaiaUrl, gaiaPath, gaiaData, privateKey));
+    gaiaUploadProfile(network, gaiaUrl, gaiaData, privateKey, blockstackID));
 
   return Promise.all(uploadPromises)
     .then((publicUrls) => {
