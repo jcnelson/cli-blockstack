@@ -327,7 +327,7 @@ const CLI_ARGS = {
           name: 'path',
           type: 'string',
           realtype: 'path',
-          pattern: PATH_PATTERN,
+          pattern: '.+',
         },
         {
           name: 'app_private_key',
