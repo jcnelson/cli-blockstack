@@ -2999,18 +2999,25 @@ function addressConvert(network: Object, args: Array<string>) {
 /*
  * Run an authentication daemon on a given port.
  * args:
- * @gaiaHubUrl (string) the write endpoint of your preferred Gaia hub
+ * @gaiaHubUrl (string) the write endpoint of your app Gaia hub, where app data will be stored
  * @mnemonic (string) your 12-word phrase, optionally encrypted.  If encrypted, then
  * a password will be prompted.
+ * @profileGaiaHubUrl (string) the write endpoint of your profile Gaia hub, where your profile
+ *   will be stored (optional)
  * @port (number) the port to listen on (optional)
  */
 function authDaemon(network: Object, args: Array<string>) {
   const gaiaHubUrl = args[0];
   const mnemonicOrCiphertext = args[1];
   let port = 8888;  // default port
+  let profileGaiaHub = gaiaHubUrl;
 
   if (args.length > 2) {
-    port = parseInt(args[2]);
+    profileGaiaHub = args[2];
+  }
+
+  if (args.length > 3) {
+    port = parseInt(args[3]);
   }
 
   if (port < 0 || port > 65535) {
@@ -3028,11 +3035,11 @@ function authDaemon(network: Object, args: Array<string>) {
       authServer.use(cors())
 
       authServer.get(/^\/auth\/*$/, (req: express.request, res: express.response) => {
-        return handleAuth(network, mnemonic, gaiaHubUrl, port, req, res);
+        return handleAuth(network, mnemonic, gaiaHubUrl, profileGaiaHub, port, req, res);
       });
 
       authServer.get(/^\/signin\/*$/, (req: express.request, res: express.response) => {
-        return handleSignIn(network, gaiaHubUrl, req, res);
+        return handleSignIn(network, mnemonic, gaiaHubUrl, profileGaiaHub, req, res);
       });
 
       authServer.listen(port, () => console.log(`Authentication server started on ${port}`));
