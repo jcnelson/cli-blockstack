@@ -142,7 +142,7 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'gaiaHub',
+          name: 'appGaiaHub',
           type: 'string',
           realtype: 'url',
           pattern: URL_PATTERN,
@@ -154,6 +154,12 @@ const CLI_ARGS = {
           pattern: '.+',
         },
         {
+          name: 'profileGaiaHub',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
           name: 'port',
           type: 'string',
           realtype: 'portnum',
@@ -161,7 +167,7 @@ const CLI_ARGS = {
         },
       ],
       minItems: 2,
-      maxItems: 3,
+      maxItems: 4,
       help: 'Run an authentication endpoint for the set of names owned ' +
       'by the given backup phrase.  Send applications the given Gaia hub URL on sign-in, ' +
       'so the application will use it to read/write user data.\n' +
@@ -172,7 +178,9 @@ const CLI_ARGS = {
       'Example:\n' +
       '\n' +
       '    $ export BACKUP_PHRASE="oak indicate inside poet please share dinner monitor glow hire source perfect"\n' +
-      '    $ blockstack-cli authenticator "https://hub.blockstack.org" "$BACKUP_PHRASE"\n' +
+      '    $ export APP_GAIA_HUB="https://1.2.3.4"' +
+      '    $ export PROFILE_GAIA_HUB="https://hub.blockstack.org"' +
+      '    $ blockstack-cli authenticator "$APP_GAIA_HUB" "$BACKUP_PHRASE" "$PROFILE_GAIA_HUB" 8888\n' +
       '    Press Ctrl+C to exit\n' +
       '    Authentication server started on 8888\n',
       group: 'Authentication',
