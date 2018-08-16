@@ -124,13 +124,18 @@ function gaiaFindProfileName(network: Object,
           throw new Error(`Could not determine profile URL for ${String(blockstackID)}: no URL in zone file`);
         }
 
-        // profile URL must match Gaia hub's URL prefix and address 
+        // profile URL path must match Gaia hub's URL prefix and address 
+        // (the host can be different)
         const gaiaReadPrefix = `${hubConfig.url_prefix}${hubConfig.address}`;
-        if (!profileUrl.startsWith(gaiaReadPrefix)) {
-          throw new Error(`Could not determine profile URL for ${String(blockstackID)}: wrong Gaia hub`);
+        const gaiaReadUrlPath = String(URL.parse(gaiaReadPrefix).path);
+        const profileUrlPath = String(URL.parse(profileUrl).path);
+
+        if (!profileUrlPath.startsWith(gaiaReadUrlPath)) {
+          throw new Error(`Could not determine profile URL for ${String(blockstackID)}: wrong Gaia hub` +
+          ` (${gaiaReadPrefix} does not correspond to ${profileUrl})`);
         }
 
-        const profilePath = profileUrl.substring(gaiaReadPrefix.length + 1);
+        const profilePath = profileUrlPath.substring(gaiaReadUrlPath.length + 1);
         return profilePath;
       })
   }
