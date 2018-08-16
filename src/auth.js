@@ -49,6 +49,21 @@ const authTransitKey = crypto.randomBytes(32).toString('hex');
 const authTransitPubkey = getPublicKeyFromPrivateKey(authTransitKey);
 
 /*
+ * Get the app private key
+ */
+function getAppPrivateKey(network: Object,
+                          mnemonic: string,
+                          id: NamedIdentityType,
+                          appOrigin: string
+): string {
+  const appKeyInfo = getApplicationKeyInfo(network, mnemonic, id.idAddress, appOrigin, id.index);
+  const appPrivateKey = appKeyInfo.keyInfo.privateKey === 'TODO' ?
+                        appKeyInfo.legacyKeyInfo.privateKey :
+                        appKeyInfo.keyInfo.privateKey;
+  return appPrivateKey;
+}
+
+/*
  * Make a sign-in link
  */
 function makeSignInLink(network: Object,
@@ -60,9 +75,7 @@ function makeSignInLink(network: Object,
   
   const appOrigin = authRequest.domain_name;
   const appKeyInfo = getApplicationKeyInfo(network, mnemonic, id.idAddress, appOrigin, id.index);
-  const appPrivateKey = appKeyInfo.keyInfo.privateKey === 'TODO' ?
-                        appKeyInfo.legacyKeyInfo.privateKey :
-                        appKeyInfo.keyInfo.privateKey;
+  const appPrivateKey = getAppPrivateKey(network, mnemonic, id, appOrigin);
 
   const associationToken = makeAssociationToken(appPrivateKey, id.privateKey)
   const authResponseTmp = blockstack.makeAuthResponse(
@@ -249,11 +262,10 @@ function makeAssociationToken(appPrivateKey: string, identityKey: string) : stri
  * Get all of a 12-word phrase's identities, profiles, and Gaia connections.
  * Returns a Promise to an Array of NamedIdentityType instances
  */
-export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: string) 
+export function getIdentityInfo(network: Object, mnemonic: string, appGaiaHub: string, profileGaiaHub: string) 
   : Promise<Array<NamedIdentityType>> {
 
   let identities = [];
-  let gaiaConnections = [];
   network.setCoerceMainnetAddress(true);    // for lookups in regtest
   
   // load up all of our identity addresses, profiles, profile URLs, and Gaia connections
@@ -299,15 +311,13 @@ export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: s
       // connect to all Gaia hubs
       const gaiaConnectionPromises = [];
       for (let i = 0; i < ids.length; i++) {
-        const gaiaPromise = gaiaConnect(network, gaiaHubUrl, ids[i].privateKey);
+        const gaiaPromise = gaiaConnect(network, profileGaiaHub, ids[i].privateKey);
         gaiaConnectionPromises.push(gaiaPromise);
       }
 
       return Promise.all(gaiaConnectionPromises);
     })
     .then((connections) => {
-      gaiaConnections = connections;
-
       for (let i = 0; i < connections.length; i++) {
         // associate this identity with the gaia hub token 
         identities[i].gaiaConnection = connections[i];
@@ -332,8 +342,14 @@ export function getIdentityInfo(network: Object, mnemonic: string, gaiaHubUrl: s
  * Serves back an error page on error.
  * Returns a Promise that resolves to nothing.
  */
-export function handleAuth(network: Object, mnemonic: string, gaiaHubUrl: string, port: number, 
-                           req: express.request, res: express.response) : Promise<*> {
+export function handleAuth(network: Object,
+                           mnemonic: string,
+                           gaiaHubUrl: string,
+                           profileGaiaHub: string,
+                           port: number, 
+                           req: express.request,
+                           res: express.response
+) : Promise<*> {
 
   const authToken = req.query.authRequest;
   if (!authToken) {
@@ -344,7 +360,7 @@ export function handleAuth(network: Object, mnemonic: string, gaiaHubUrl: string
  
   let errorMsg;
   let identities;
-  return getIdentityInfo(network, mnemonic, gaiaHubUrl)
+  return getIdentityInfo(network, mnemonic, gaiaHubUrl, profileGaiaHub)
     .then((ids) => {
       identities = ids;
       errorMsg = 'Unable to verify authentication token';
@@ -391,7 +407,7 @@ export function handleAuth(network: Object, mnemonic: string, gaiaHubUrl: string
  * Update a named identity's profile with new app data, if necessary.
  * Indicates whether or not the profile was changed.
  */
-function updateProfileApps(id: NamedIdentityType, appOrigin: string) 
+function updateProfileApps(id: NamedIdentityType, appOrigin: string, appGaiaConfig: GaiaHubConfig) 
   : { profile: Object, changed: boolean } {
 
   let profile = id.profile;
@@ -416,19 +432,21 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
     profile.apps = {};
   }
 
+  const gaiaPrefix = `${appGaiaConfig.url_prefix}${appGaiaConfig.address}`;
+
   if (!profile.apps.hasOwnProperty(appOrigin) || !profile.apps[appOrigin]) {
     needProfileUpdate = true;
-    logger.debug(`Setting Gaia read URL ${id.gaiaConnection.url_prefix} for ${appOrigin} ` +
+    logger.debug(`Setting Gaia read URL ${gaiaPrefix} for ${appOrigin} ` +
       `in profile for ${id.name}`);
 
-    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
+    profile.apps[appOrigin] = gaiaPrefix;
   }
-  else if (profile.apps[appOrigin] !== id.gaiaConnection.url_prefix) {
+  else if (!profile.apps[appOrigin].startsWith(gaiaPrefix)) {
     needProfileUpdate = true;
     logger.debug(`Overriding Gaia read URL for ${appOrigin} from ${profile.apps[appOrigin]} ` +
-      `to ${id.gaiaConnection.url_prefix} in profile for ${id.name}`);
+      `to ${gaiaPrefix} in profile for ${id.name}`);
 
-    profile.apps[appOrigin] = id.gaiaConnection.url_prefix;
+    profile.apps[appOrigin] = gaiaPrefix;
   }
 
   return { profile, changed: needProfileUpdate };
@@ -448,8 +466,13 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string)
  * Sends the user an error page on failure.
  * Returns a Promise that resolves to nothing.
  */
-export function handleSignIn(network: Object, gaiaHubUrl: string,
-                             req: express.request, res: express.response): Promise<*> {
+export function handleSignIn(network: Object, 
+                             mnemonic: string,
+                             appGaiaHub: string, 
+                             profileGaiaHub: string,
+                             req: express.request, 
+                             res: express.response
+): Promise<*> {
   
   const encAuthResponse = req.query.encAuthResponse;
   if (!encAuthResponse) {
@@ -463,11 +486,11 @@ export function handleSignIn(network: Object, gaiaHubUrl: string,
   let errorStatusCode = 400;
   let authResponsePayload;
     
-  let id = null;
-  let appOrigin = null;
-  let redirectUri = null;
-  let scopes = [];
-  let authResponse
+  let id;
+  let appOrigin;
+  let redirectUri;
+  let scopes;
+  let authResponse;
 
   return Promise.resolve().then(() => {
     // verify and decrypt 
@@ -500,23 +523,29 @@ export function handleSignIn(network: Object, gaiaHubUrl: string,
     redirectUri = authResponsePayload.metadata.redirect_uri;
     scopes = authResponsePayload.metadata.scopes;
 
-    // remove sensitive information
+    const appPrivateKey = getAppPrivateKey(network, mnemonic, id, appOrigin);
+
+    // remove sensitive (CLI-specific) information
     delete authResponsePayload.metadata;
     authResponse = new jsontokens.TokenSigner('ES256K', id.privateKey).sign(authResponsePayload);
     
     logger.debug(`App ${appOrigin} requests scopes ${JSON.stringify(scopes)}`);
 
-    const newProfileData = updateProfileApps(id, appOrigin);
+    // connect to the app gaia hub
+    return gaiaConnect(network, appGaiaHub, appPrivateKey);
+  })
+  .then((appHubConfig) => {
+    const newProfileData = updateProfileApps(id, appOrigin, appHubConfig);
     const profile = newProfileData.profile;
     const needProfileUpdate = newProfileData.changed && scopes.includes('store_write');
 
     // sign and replicate new profile if we need to.
     // otherwise do nothing 
     if (needProfileUpdate) {
-      logger.debug(`Upload new profile to ${gaiaHubUrl}`);
+      logger.debug(`Upload new profile to ${profileGaiaHub}`);
       const profileJWT = makeProfileJWT(profile, id.privateKey);
       return gaiaUploadProfileAll(
-        network, [gaiaHubUrl], profileJWT, id.privateKey, id.name);
+        network, [profileGaiaHub], profileJWT, id.privateKey, id.name);
     }
     else {
       logger.debug(`Gaia read URL for ${appOrigin} is ${profile.apps[appOrigin]}`);
