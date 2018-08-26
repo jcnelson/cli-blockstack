@@ -2587,7 +2587,7 @@ function getKeyAddress(network: Object, args: Array<string>) {
 function gaiaGetFile(network: Object, args: Array<string>) {
   const username = args[0];
   const origin = args[1];
-  const path = args[2].replace(/^[\/]+/, '');
+  const path = args[2];
   let appPrivateKey = args[3];
   let decrypt = false;
   let verify = false;
