@@ -2703,7 +2703,7 @@ function gaiaListFilesLoop(hubConfig: Object, page: string | null,
             fileCount + entries.length, callback);
       }
       else {
-        return Promise.resolve(JSONStringify(fileCount));
+        return Promise.resolve(JSONStringify(fileCount + entries.length));
       }
     });
 }
