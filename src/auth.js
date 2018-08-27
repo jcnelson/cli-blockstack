@@ -432,7 +432,7 @@ function updateProfileApps(id: NamedIdentityType, appOrigin: string, appGaiaConf
     profile.apps = {};
   }
 
-  const gaiaPrefix = `${appGaiaConfig.url_prefix}${appGaiaConfig.address}`;
+  const gaiaPrefix = `${appGaiaConfig.url_prefix}${appGaiaConfig.address}/`;
 
   if (!profile.apps.hasOwnProperty(appOrigin) || !profile.apps[appOrigin]) {
     needProfileUpdate = true;
