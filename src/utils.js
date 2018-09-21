@@ -22,7 +22,8 @@ const secp256k1 = ecurve.getCurveByName('secp256k1');
 import {
   PRIVATE_KEY_PATTERN,
   PRIVATE_KEY_MULTISIG_PATTERN,
-  PRIVATE_KEY_SEGWIT_P2SH_PATTERN
+  PRIVATE_KEY_SEGWIT_P2SH_PATTERN,
+  ID_ADDRESS_PATTERN
 } from './argparse';
 
 import {
@@ -32,6 +33,12 @@ import {
 import {
   decryptBackupPhrase
 } from './encrypt';
+
+import {
+  getOwnerKeyInfo,
+  getApplicationKeyInfo,
+  extractAppKey,
+} from './keys';
 
 type UTXO = { value?: number,
               confirmations?: number,
@@ -447,14 +454,15 @@ export function getNameInfoEasy(network: Object, name: string) : Promise<*> {
 
 /*
  * Look up a name's zone file, profile URL, and profile
- * Returns a Promise to the above, or {'error': ...}
+ * Returns a Promise to the above, or throws an error.
  */
-export function nameLookup(network: Object, name: string) 
-  : Promise<{ profile: Object, profileUrl: ?string, zonefile: ?string }> {
+export function nameLookup(network: Object, name: string, includeProfile?: boolean = true) 
+  : Promise<{ profile: Object | null, profileUrl: ?string, zonefile: ?string }> {
 
   const nameInfoPromise = getNameInfoEasy(network, name);
-  const profilePromise = blockstack.lookupProfile(name)
-    .catch(() => null);
+  const profilePromise = includeProfile ?
+    blockstack.lookupProfile(name).catch(() => null) :
+    Promise.resolve().then(() => null);
 
   const zonefilePromise = nameInfoPromise.then((nameInfo) => nameInfo ? nameInfo.zonefile : null);
 
@@ -479,6 +487,7 @@ export function nameLookup(network: Object, name: string)
     }
     catch(e) {
       logger.error(e);
+      throw e;
     }
 
     const ret = {
@@ -577,5 +586,73 @@ export function mkdirs(path: string) : void {
     }
     tmpPath = `${tmpPath}/${pathParts[i]}`;
   }
+}
+
+/*
+ * Given a name or ID address, return a promise to the ID Address
+ */
+export function getIDAddress(network: Object, nameOrIDAddress: string) : Promise<*> {
+  let idAddressPromise;
+  if (nameOrIDAddress.match(ID_ADDRESS_PATTERN)) {
+    idAddressPromise = Promise.resolve().then(() => nameOrIDAddress);
+  }
+  else {
+    // need to look it up 
+    idAddressPromise = network.getNameInfo(nameOrIDAddress)
+      .then((nameInfo) => `ID-${nameInfo.address}`);
+  }
+  return idAddressPromise;
+}
+
+/*
+ * Find all identity addresses until we have one that matches the given one.
+ * Loops forever if not found
+ */
+export function getOwnerKeyFromIDAddress(network: Object, 
+                                         mnemonic: string, 
+                                         idAddress: string
+) : string {
+  let index = 0;
+  while(true) {
+    const keyInfo = getOwnerKeyInfo(network, mnemonic, index);
+    if (keyInfo.idAddress === idAddress) {
+      return keyInfo.privateKey;
+    }
+    index++;
+  }
+  throw new Error('Unreachable')
+}
+
+/*
+ * Given a name or an ID address and a possibly-encrypted mnemonic, get the owner and app
+ * private keys.
+ * May prompt for a password if mnemonic is encrypted.
+ */
+export function getIDAppKeys(network: Object, 
+                             nameOrIDAddress: string,
+                             appOrigin: string,
+                             mnemonicOrCiphertext: string,
+) : Promise<{ ownerPrivateKey: string, appPrivateKey: string, mnemonic: string }> {
+
+  let mnemonic;
+  let ownerPrivateKey;
+  let appPrivateKey;
+
+  return getBackupPhrase(mnemonicOrCiphertext)
+    .then((mn) => {
+      mnemonic = mn;
+      return getIDAddress(network, nameOrIDAddress)
+    })
+    .then((idAddress) => {
+      const appKeyInfo = getApplicationKeyInfo(network, mnemonic, idAddress, appOrigin);
+      appPrivateKey = extractAppKey(appKeyInfo);
+      ownerPrivateKey = getOwnerKeyFromIDAddress(network, mnemonic, idAddress);
+      const ret = {
+        appPrivateKey,
+        ownerPrivateKey,
+        mnemonic
+      };
+      return ret;
+    });
 }
 
