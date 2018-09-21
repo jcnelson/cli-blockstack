@@ -527,7 +527,7 @@ const CLI_ARGS = {
       help: 'Upload the contents of a previously-dumped Gaia bucket to a new Gaia hub.  The GAIA_HUB argument ' +
       'must correspond to the *write* endpoint of the Gaia hub -- that is, you should be able to fetch ' +
       '$GAIA_HUB/hub_info.  DUMP_DIR must contain the file contents created by a previous successful run of the gaia_dump_bucket command, ' +
-      'and both NAME_OR_ID_ADDRESS and APP_ORIGIN must be the same as they were when it was run.\n'
+      'and both NAME_OR_ID_ADDRESS and APP_ORIGIN must be the same as they were when it was run.\n' +
       '\n' +
       'Example:\n' +
       '\n' +
