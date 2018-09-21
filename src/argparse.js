@@ -131,6 +131,7 @@ const CLI_ARGS = {
       'or a serialized multisig private key bundle.\n' + 
       '\n' +
       'Examples:\n' + 
+      '    $ # Tip: You can obtain the owner key with the get_owner_keys command\n' +
       '    $ export OWNER_KEY="136ff26efa5db6f06b28f9c8c7a0216a1a52598045162abfe435d13036154a1b01"\n' +
       '    $ blockstack-cli announce 737c631c7c5d911c6617993c21fba731363f1cfe "$OWNER_KEY"\n' +
       '\n' +
@@ -142,13 +143,13 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'appGaiaHub',
+          name: 'app_gaia_hub',
           type: 'string',
           realtype: 'url',
           pattern: URL_PATTERN,
         },
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: 'string',
           realtype: '12_words_or_ciphertext',
           pattern: '.+',
@@ -178,8 +179,8 @@ const CLI_ARGS = {
       'Example:\n' +
       '\n' +
       '    $ export BACKUP_PHRASE="oak indicate inside poet please share dinner monitor glow hire source perfect"\n' +
-      '    $ export APP_GAIA_HUB="https://1.2.3.4"' +
-      '    $ export PROFILE_GAIA_HUB="https://hub.blockstack.org"' +
+      '    $ export APP_GAIA_HUB="https://1.2.3.4"\n' +
+      '    $ export PROFILE_GAIA_HUB="https://hub.blockstack.org"\n' +
       '    $ blockstack-cli authenticator "$APP_GAIA_HUB" "$BACKUP_PHRASE" "$PROFILE_GAIA_HUB" 8888\n' +
       '    Press Ctrl+C to exit\n' +
       '    Authentication server started on 8888\n',
@@ -199,7 +200,20 @@ const CLI_ARGS = {
       maxItems: 1,
       help: 'Query the balance of an account.  Returns the balances of each kind of token ' +
       'that the account owns.  The balances will be in the *smallest possible units* of the ' +
-      'token (i.e. satoshis for BTC, microStacks for Stacks, etc.).',
+      'token (i.e. satoshis for BTC, microStacks for Stacks, etc.).\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ blockstack-cli balance 16pm276FpJYpm7Dv3GEaRqTVvGPTdceoY4\n' +
+      '    {\n' +
+      '      "BTC": "123456"\n' +
+      '      "STACKS": "123456"\n' +
+      '    }\n' +
+      '    $ blockstack-cli balance SPZY1V53Z4TVRHHW9Z7SFG8CZNRAG7BD8WJ6SXD0\n' +
+      '    {\n' +
+      '      "BTC": "123456"\n' +
+      '      "STACKS": "123456"\n' +
+      '    }\n',
       group: 'Account Management',
     },
     convert_address: {
@@ -293,27 +307,50 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
+          name: 'name_or_id_address',
+          type: 'string',
+          realtype: 'name_or_id_address',
+          pattern: `${ID_ADDRESS_PATTERN}|${NAME_PATTERN}|${SUBDOMAIN_PATTERN}` 
+        },
+        {
+          name: 'app_origin',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
           name: 'gaia_hub',
           type: 'string',
           realtype: 'url',
           pattern: URL_PATTERN,
         },
         {
-          name: 'app_private_key',
+          name: 'backup_phrase',
           type: 'string',
-          realtype: 'private_key',
-          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+          realtype: '12_words_or_ciphertext',
         },
         {
           name: 'dump_dir',
           type: 'string',
           realtype: 'path',
           pattern: PATH_PATTERN,
-        },
+        }
       ],
-      minItems: 3,
-      maxItems: 3,
-      help: 'Download the contents of a Gaia hub bucket to a given directory.',
+      minItems: 5,
+      maxItems: 5,
+      help: 'Download the contents of a Gaia hub bucket to a given directory.  The GAIA_HUB argument ' +
+      'must correspond to the *write* endpoint of the Gaia hub -- that is, you should be able to fetch ' +
+      '$GAIA_HUB/hub_info.  If DUMP_DIR does not exist, it will be created.\n' +
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export BACKUP_PHRASE="section amount spend resemble spray verify night immune tattoo best emotion parrot\n' +
+      '    $ blockstack-cli gaia_dump_bucket hello.id.blockstack https://sample.app https://hub.blockstack.org "$BACKUP_PHRASE" ./backups\n' +
+      '    Download 3 files...\n' +
+      '    Download hello_world to ./backups/hello_world\n' +
+      '    Download dir/format to ./backups/dir\\x2fformat\n' +
+      '    Download /.dotfile to ./backups/\\x2f.dotfile\n' +
+      '    3\n',
       group: "Gaia",
     },
     gaia_getfile: {
@@ -326,15 +363,15 @@ const CLI_ARGS = {
           pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
         },
         {
-          name: 'origin',
+          name: 'app_origin',
           type: 'string',
           realtype: 'url',
           pattern: URL_PATTERN,
         },
         {
-          name: 'path',
+          name: 'filename',
           type: 'string',
-          realtype: 'path',
+          realtype: 'filename',
           pattern: '.+',
         },
         {
@@ -358,7 +395,31 @@ const CLI_ARGS = {
       ],
       minItems: 3,
       maxItems: 6,
-      help: 'Get a file from another user\'s Gaia hub.  Prints the file data to stdout.',
+      help: 'Get a file from another user\'s Gaia hub.  Prints the file data to stdout.  If you ' +
+      'want to read an encrypted file, and/or verify a signed file, then you must pass an app ' +
+      'private key, and pass 1 for DECRYPT and/or VERIFY.  If the file is encrypted, and you do not ' +
+      'pass an app private key, then this command downloads the ciphertext.  If the file is signed, ' +
+      'and you want to download its data and its signature, then you must run this command twice -- ' +
+      'once to get the file contents at FILENAME, and once to get the signature (whose name will be FILENAME.sig).\n' +
+      '\n' +
+      'Note that Gaia is a key-value store, and has no notion of directories.  Any directory-separator characters like / or \\ in FILENAME ' +
+      'will be treated as string literals.\n' +
+      '\n' +
+      'Example without encryption:\n' +
+      '\n' + 
+      '    $ # Get an unencrypted, unsigned file\n' +
+      '    $ blockstack-cli gaia_getfile ryan.id http://public.ykliao.com statuses.json\n' +
+      '    [{"id":0,"text":"Hello, Blockstack!","created_at":1515786983492}]\n' +
+      '\n' +
+      'Example with encryption:\n' +
+      '\n' +
+      '    $ # Get an encrypted file without decrypting\n' +
+      '    $ blockstack-cli gaia_getfile ryan.id https://app.graphitedocs.com documentscollection.json\n' +
+      '' +
+      '    $ # Get an encrypted file, and decrypt it\n' +
+      '    $ # Tip: You can obtain the app key with the get_app_keys command\n' +
+      '    $ export APP_KEY="3ac770e8c3d88b1003bf4a0a148ceb920a6172bdade8e0325a1ed1480ab4fb19"\n' +
+      '    $ blockstack-cli gaia_getfile ryan.id https://app.graphitedocs.com documentscollection.json "$APP_KEY" 1 0\n',
       group: 'Gaia',
     },
     gaia_putfile: {
@@ -377,15 +438,15 @@ const CLI_ARGS = {
           pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
         },
         {
-          name: 'dataPath',
+          name: 'data_path',
           type: 'string',
           realtype: 'path',
           pattern: '.+',
         },
         {
-          name: 'gaiaPath',
+          name: 'gaia_filename',
           type: 'string',
-          realtype: 'path',
+          realtype: 'filename',
           pattern: PATH_PATTERN,
         },
         {
@@ -432,27 +493,50 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
+          name: 'name_or_id_address',
+          type: 'string',
+          realtype: 'name_or_id_address',
+          pattern: `${ID_ADDRESS_PATTERN}|${NAME_PATTERN}|${SUBDOMAIN_PATTERN}` 
+        },
+        {
+          name: 'app_origin',
+          type: 'string',
+          realtype: 'url',
+          pattern: URL_PATTERN,
+        },
+        {
           name: 'gaia_hub',
           type: 'string',
           realtype: 'url',
           pattern: URL_PATTERN,
         },
         {
-          name: 'app_private_key',
+          name: 'backup_phrase',
           type: 'string',
-          realtype: 'private_key',
-          pattern: PRIVATE_KEY_UNCOMPRESSED_PATTERN,
+          realtype: '12_words_or_ciphertext',
         },
         {
           name: 'dump_dir',
           type: 'string',
           realtype: 'path',
           pattern: PATH_PATTERN,
-        },
+        }
       ],
-      minItems: 3,
-      maxItems: 3,
-      help: 'Upload the contents of a Gaia bucket dump to a new Gaia hub.',
+      minItems: 5,
+      maxItems: 5,
+      help: 'Upload the contents of a previously-dumped Gaia bucket to a new Gaia hub.  The GAIA_HUB argument ' +
+      'must correspond to the *write* endpoint of the Gaia hub -- that is, you should be able to fetch ' +
+      '$GAIA_HUB/hub_info.  DUMP_DIR must contain the file contents created by a previous successful run of the gaia_dump_bucket command, ' +
+      'and both NAME_OR_ID_ADDRESS and APP_ORIGIN must be the same as they were when it was run.\n'
+      '\n' +
+      'Example:\n' +
+      '\n' +
+      '    $ export BACKUP_PHRASE="section amount spend resemble spray verify night immune tattoo best emotion parrot\n' +
+      '    $ blockstack-cli gaia_restore_bucket hello.id.blockstack https://sample.app https://new.gaia.hub "$BACKUP_PHRASE" ./backups\n' +
+      '    Uploaded ./backups/hello_world to https://new.gaia.hub/hub/1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc/hello_world\n' +
+      '    Uploaded ./backups/dir\\x2fformat to https://new.gaia.hub/hub/1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc/dir/format\n' +
+      '    Uploaded ./backups/\\x2f.dotfile to https://new.gaia.hub/hub/1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc//.dotfile\n' +
+      '    3\n',
       group: "Gaia",
     },
     gaia_sethub: {
@@ -483,7 +567,7 @@ const CLI_ARGS = {
           pattern: URL_PATTERN,
         },
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: 'string',
           realtype: '12_words_or_ciphertext',
         },
@@ -647,7 +731,7 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: 'string',
           realtype: '12_words_or_ciphertext',
         },
@@ -698,7 +782,7 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: "string",
           realtype: '12_words_or_ciphertext',
         },
@@ -721,7 +805,7 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: "string",
           realtype: '12_words_or_ciphertext',
         },
@@ -795,7 +879,7 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'backup_phrase_or_ciphertext',
+          name: 'backup_phrase',
           type: 'string',
           realtype: '12_words_or_ciphertext',
         },
