@@ -375,3 +375,13 @@ export function getApplicationKeyInfo(network: Object,
   };
   return res;
 }
+
+/*
+ * Extract the "right" app key
+ */
+export function extractAppKey(appKeyInfo: { keyInfo: { privateKey: string }, legacyKeyInfo: { privateKey : string } }) {
+  const appPrivateKey = (appKeyInfo.keyInfo.privateKey === 'TODO' || !appKeyInfo.keyInfo.privateKey ?
+                         appKeyInfo.legacyKeyInfo.privateKey :
+                         appKeyInfo.keyInfo.privateKey);
+  return appPrivateKey;
+}
