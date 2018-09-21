@@ -28,6 +28,7 @@ import {
   getOwnerKeyInfo,
   getPaymentKeyInfo,
   getApplicationKeyInfo,
+  extractAppKey,
   STRENGTH,
 } from './keys';
 
@@ -61,7 +62,8 @@ import {
   gaiaAuth,
   gaiaConnect,
   gaiaUploadProfileAll,
-  makeZoneFileFromGaiaUrl
+  makeZoneFileFromGaiaUrl,
+  makeAssociationToken
 } from './data';
 
 import {
@@ -81,11 +83,12 @@ import {
   nameLookup,
   getpass,
   getBackupPhrase,
-  mkdirs
+  mkdirs,
+  getIDAddress,
+  getIDAppKeys
 } from './utils';
 
 import {
-  getIdentityInfo,
   handleAuth,
   handleSignIn
 } from './auth';
@@ -113,7 +116,7 @@ function whois(network: Object, args: Array<string>) {
         // the test framework expects a few more fields.
         // these are for compatibility with the old CLI.
         // you are not required to understand them.
-        return Promise.all([network.getNameHistory(name), network.getBlockHeight()])
+        return Promise.all([network.getNameHistory(name, 0), network.getBlockHeight()])
           .then(([nameHistory, blockHeight]) => {
             if (nameInfo.renewal_deadline > 0 && nameInfo.renewal_deadline <= blockHeight) {
               return {'error': 'Name expired'}
@@ -227,27 +230,40 @@ function getNameBlockchainRecord(network: Object, args: Array<string>) {
  * Get a name's history entry or entries
  * args:
  * @name (string) the name to query
- * @startHeight (int) optional: the start of the history range
- * @endHeight (int) optional: the end of the history range
+ * @page (string) the page to query (OPTIONAL)
  */
 function getNameHistoryRecord(network: Object, args: Array<string>) {
   const name = args[0];
-  let startHeight = null;
-  let endHeight = null;
+  let page;
 
   if (args.length >= 2) {
-    startHeight = parseInt(args[1]);
+    page = parseInt(args[1]);
+    return Promise.resolve().then(() => {
+      return network.getNameHistory(name, page);
+    })
+    .then((nameHistory) => {
+      return JSONStringify(nameHistory);
+    });
   }
-  if (args.length >= 3) {
-    endHeight = parseInt(args[2]);
-  }
+  else {
+    // all pages 
+    let history = {};
+    
+    function getAllHistoryPages(page: number) {
+      return network.getNameHistory(name, page)
+        .then((results) => {
+          if (Object.keys(results).length == 0) {
+            return JSONStringify(history);
+          }
+          else {
+            history = Object.assign(history, results);
+            return getAllHistoryPages(page + 1);
+          }
+        })
+    }
 
-  return Promise.resolve().then(() => {
-    return network.getNameHistory(name, startHeight, endHeight);
-  })
-  .then((nameHistory) => {
-    return JSONStringify(nameHistory);
-  });
+    return getAllHistoryPages(0);
+  }
 }
 
 /*
@@ -2208,19 +2224,8 @@ function getAppKeys(network: Object, args: Array<string>) {
   const mnemonicPromise = getBackupPhrase(args[0]);
   const nameOrIDAddress = args[1];
   const origin = args[2];
-
-  let idAddressPromise;
-  if (nameOrIDAddress.match(ID_ADDRESS_PATTERN)) {
-    idAddressPromise = Promise.resolve().then(() => nameOrIDAddress);
-  }
-  else {
-    // need to look it up 
-    idAddressPromise = network.getNameInfo(nameOrIDAddress)
-      .then((nameInfo) => `ID-${nameInfo.address}`);
-  }
-
-  let idAddress;
-  return idAddressPromise.then((idAddr) => {
+  let idAddress
+  return getIDAddress(network, nameOrIDAddress).then((idAddr) => {
       idAddress = idAddr;
       return mnemonicPromise;
     })
@@ -2289,14 +2294,20 @@ function makeKeychain(network: Object, args: Array<string>) {
 }
 
 /*
- * Get an address's tokens and their balances
+ * Get an address's tokens and their balances.
+ * Takes either a Bitcoin or Stacks address
  * args:
- * @address (string) the balances
+ * @address (string) the address
  */
 function balance(network: Object, args: Array<string>) {
   let address = args[0];
   if (address.match(STACKS_ADDRESS_PATTERN)) {
     address = c32check.c32ToB58(address);
+  }
+
+  if (BLOCKSTACK_TEST) {
+    // force testnet address if we're in regtest or testnet mode
+    address = network.coerceAddress(address);
   }
 
   return Promise.resolve().then(() => {
@@ -2348,20 +2359,39 @@ function balance(network: Object, args: Array<string>) {
  * Get a page of the account's history
  * args:
  * @address (string) the account address
- * @startBlockHeight (int) start of the block height range to query
- * @endBlockHeight (int) end of the block height range to query
- * @page (int) the page of the history to fetch
+ * @page (int) the page of the history to fetch (optional)
  */
 function getAccountHistory(network: Object, args: Array<string>) {
   const address = c32check.c32ToB58(args[0]);
-  const startBlockHeight = parseInt(args[1]);
-  const endBlockHeight = parseInt(args[2]);
-  const page = parseInt(args[3]);
 
-  return Promise.resolve().then(() => {
-    return network.getAccountHistoryPage(address, startBlockHeight, endBlockHeight, page);
-  })
-  .then(history => JSONStringify(history));
+  if (args.length >= 2) {
+    const page = parseInt(args[1]);
+    return Promise.resolve().then(() => {
+      return network.getAccountHistoryPage(address, page);
+    })
+    .then((nameHistory) => {
+      return JSONStringify(nameHistory);
+    });
+  }
+  else {
+    // all pages 
+    let history = {};
+    
+    function getAllHistoryPages(page: number) {
+      return network.getAccountHistoryPage(address, page)
+        .then((results) => {
+          if (Object.keys(results).length == 0) {
+            return JSONStringify(history);
+          }
+          else {
+            history = Object.assign(history, results);
+            return getAllHistoryPages(page + 1);
+          }
+        })
+    }
+
+    return getAllHistoryPages(0);
+  }
 }
 
 /*
@@ -2752,14 +2782,19 @@ function batchify<T>(input: Array<T>, batchSize: number = 50): Array<Array<T>> {
 /*
  * Dump all files from a Gaia hub bucket to a directory on disk.
  * args:
+ * @nameOrIDAddress (string) the name or ID address that owns the bucket to dump
+ * @appOrigin (string) the application for which to dump data
  * @hubUrl (string) the URL to the write endpoint of the gaia hub
- * @appPrivateKey (string) the private key used to authenticate to the gaia hub
+ * @mnemonic (string) the 12-word phrase or ciphertext
  * @dumpDir (string) the directory to hold the dumped files
  */
 function gaiaDumpBucket(network: Object, args: Array<string>) {
-  const hubUrl = args[0];
-  const appPrivateKey = args[1];
-  let dumpDir = args[2];
+  const nameOrIDAddress = args[0];
+  const appOrigin = args[1];
+  const hubUrl = args[2];
+  const mnemonicOrCiphertext = args[3];
+  let dumpDir = args[4];
+
   if (dumpDir.length === 0) {
     throw new Error('Invalid directory (not given)');
   }
@@ -2811,8 +2846,17 @@ function gaiaDumpBucket(network: Object, args: Array<string>) {
 
   const fileNames = [];
   let gaiaHubConfig;
+  let mnemonic;
+  let appPrivateKey;
+  let ownerPrivateKey;
 
-  return gaiaConnect(network, hubUrl, appPrivateKey)
+  return getIDAppKeys(network, nameOrIDAddress, appOrigin, mnemonicOrCiphertext)
+    .then((keyInfo) => {
+      mnemonic = keyInfo.mnemonic;
+      appPrivateKey = keyInfo.appPrivateKey;
+      ownerPrivateKey = keyInfo.ownerPrivateKey;
+      return gaiaConnect(network, hubUrl, appPrivateKey, ownerPrivateKey)
+    })
     .then((hubConfig) => {
       gaiaHubConfig = hubConfig;
       return gaiaListFilesLoop(hubConfig, null, 0, 0, (name) => {
@@ -2830,29 +2874,53 @@ function gaiaDumpBucket(network: Object, args: Array<string>) {
         filePromiseChain = filePromiseChain.then(() => batchPromise);
       }
 
-      return filePromiseChain
-        .then(() => fileCount);
+      return filePromiseChain.then(() => fileCount);
     });
 }
 
 /*
  * Restore all of the files in a Gaia bucket dump to a new Gaia hub
  * args:
- * @hubUrl (string) the URL to the write endpoint of the new Gaia hub
- * @appPrivateKey (string) the app private key
- * @dumpDir (string) the path to the Gaia dump to upload 
+ * @nameOrIDAddress (string) the name or ID address that owns the bucket to dump
+ * @appOrigin (string) the origin of the app for which to restore data
+ * @hubUrl (string) the URL to the write endpoint of the new gaia hub
+ * @mnemonic (string) the 12-word phrase or ciphertext
+ * @dumpDir (string) the directory to hold the dumped files
  */
 function gaiaRestoreBucket(network: Object, args: Array<string>) {
-  const hubUrl = args[0];
-  const appPrivateKey = args[1];
-  const dumpDir = args[2];
+  const nameOrIDAddress = args[0];
+  const appOrigin = args[1];
+  const hubUrl = args[2];
+  const mnemonicOrCiphertext = args[3];
+  let dumpDir = args[4];
+
+  if (dumpDir.length === 0) {
+    throw new Error('Invalid directory (not given)');
+  }
+  if (dumpDir[0] !== '/') {
+    // relative path.  make absolute 
+    const cwd = process.realpathSync('.');
+    dumpDir = pathTools.normalize(`${cwd}/${dumpDir}`);
+  }
 
   const fileList = fs.readdirSync(dumpDir);
   const fileBatches = batchify(fileList, 10);
 
+  let gaiaHubConfig;
+  let mnemonic;
+  let appPrivateKey;
+  let ownerPrivateKey;
+  
   // force mainnet addresses 
   blockstack.config.network.layer1 = bitcoin.networks.bitcoin;
-  return gaiaAuth(appPrivateKey, hubUrl)
+
+  return getIDAppKeys(network, nameOrIDAddress, appOrigin, mnemonicOrCiphertext)
+    .then((keyInfo) => {
+      mnemonic = keyInfo.mnemonic;
+      appPrivateKey = keyInfo.appPrivateKey;
+      ownerPrivateKey = keyInfo.ownerPrivateKey;
+      return gaiaAuth(appPrivateKey, hubUrl, ownerPrivateKey);
+    })
     .then((userData) => {
       let uploadPromise = Promise.resolve();
       for (let i = 0; i < fileBatches.length; i++) {
@@ -2924,10 +2992,7 @@ function gaiaSetHub(network: Object, args: Array<string>) {
       const appKeyInfo = getApplicationKeyInfo(network, mnemonic, idAddress, appOrigin);
       const ownerKeyInfo = getOwnerKeyInfo(network, mnemonic, appKeyInfo.ownerKeyIndex);
      
-      let appPrivateKey = (appKeyInfo.keyInfo.privateKey === 'TODO' || !appKeyInfo.keyInfo.privateKey ?
-                           appKeyInfo.legacyKeyInfo.privateKey :
-                           appKeyInfo.keyInfo.privateKey);
-
+      let appPrivateKey = extractAppKey(appKeyInfo);
       appPrivateKey = `${canonicalPrivateKey(appPrivateKey)}01`;
       appAddress = network.coerceMainnetAddress(getPrivateKeyAddress(network, appPrivateKey));
 
