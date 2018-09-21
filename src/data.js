@@ -4,12 +4,14 @@ const blockstack = require('blockstack');
 const jsontokens = require('jsontokens');
 const bitcoin = require('bitcoinjs-lib');
 const URL = require('url');
+const crypto = require('crypto');
 
 import {
   canonicalPrivateKey,
   getPrivateKeyAddress,
   checkUrl,
-  SafetyError
+  SafetyError,
+  getPublicKeyFromPrivateKey
 } from './utils';
 
 import {
@@ -21,7 +23,9 @@ import {
  * Generate an authentication response like what the browser would do,
  * and store the relevant data to our emulated localStorage.
  */
-function makeFakeGaiaSessionToken(appPrivateKey: string | null, hubURL: string | null) {  
+function makeFakeGaiaSessionToken(appPrivateKey: string | null,
+                                  hubURL: string | null,
+                                  associationToken?: string) {  
   const ownerPrivateKey = '24004db06ef6d26cdd2b0fa30b332a1b10fa0ba2b07e63505ffc2a9ed7df22b4';
   const transitPrivateKey = 'f33fb466154023aba2003c17158985aa6603db68db0f1afc0fcf1d641ea6c2cb';
   const transitPublicKey = '0496345da77fb5e06757b9c4fd656bf830a3b293f245a6cc2f11f8334ebb690f1' + 
@@ -38,24 +42,53 @@ function makeFakeGaiaSessionToken(appPrivateKey: string | null, hubURL: string |
     appPrivateKey,
     undefined,
     transitPublicKey,
-    hubURL);
+    hubURL,
+    blockstack.config.network.blockstackAPIUrl,
+    associationToken
+  );
 
   return authResponse;
 }
 
+/*
+ * Make an association token for the given address.
+ * TODO belongs in a "gaia.js" library
+ */
+export function makeAssociationToken(appPrivateKey: string, identityKey: string) : string {
+  const appPublicKey = getPublicKeyFromPrivateKey(`${canonicalPrivateKey(appPrivateKey)}01`)
+  const FOUR_MONTH_SECONDS = 60 * 60 * 24 * 31 * 4
+  const salt = crypto.randomBytes(16).toString('hex')
+  const identityPublicKey = getPublicKeyFromPrivateKey(identityKey)
+  const associationTokenClaim = {
+    childToAssociate: appPublicKey,
+    iss: identityPublicKey,
+    exp: FOUR_MONTH_SECONDS + (new Date()/1000),
+    salt 
+  }
+  const associationToken = new jsontokens.TokenSigner('ES256K', identityKey)
+    .sign(associationTokenClaim)
+  return associationToken
+}
 
 /*
  * Authenticate to Gaia.  Used for reading, writing, and listing files.
  * Process a (fake) session token and set up a Gaia hub connection.
  * Returns a Promise that resolves to the (fake) userData
  */
-export function gaiaAuth(appPrivateKey: string | null, hubUrl: string | null) {
+export function gaiaAuth(appPrivateKey: string | null,
+                         hubUrl: string | null,
+                         ownerPrivateKey?: string) {
   // Gaia speaks mainnet only!
   if (!blockstack.config.network.isMainnet()) {
     throw new Error('Gaia only works with mainnet networks.');
   }
 
-  const gaiaSessionToken = makeFakeGaiaSessionToken(appPrivateKey, hubUrl);
+  let associationToken;
+  if (ownerPrivateKey && appPrivateKey) {
+    associationToken = makeAssociationToken(appPrivateKey, ownerPrivateKey);
+  }
+
+  const gaiaSessionToken = makeFakeGaiaSessionToken(appPrivateKey, hubUrl, associationToken);
   const nameLookupUrl = `${blockstack.config.network.blockstackAPIUrl}/v1/names/`;
   return blockstack.handlePendingSignIn(nameLookupUrl, gaiaSessionToken);
 }
@@ -67,13 +100,22 @@ export function gaiaAuth(appPrivateKey: string | null, hubUrl: string | null) {
  * Make sure we use a mainnet address always, even in test mode.
  * Returns a Promise that resolves to a GaiaHubConfig
  */
-export function gaiaConnect(network: Object, gaiaHubUrl: string, privateKey: string) {
+export function gaiaConnect(network: Object,
+                            gaiaHubUrl: string, 
+                            privateKey: string,
+                            ownerPrivateKey?: string
+) {
   const addressMainnet = network.coerceMainnetAddress(
     getPrivateKeyAddress(network, `${canonicalPrivateKey(privateKey)}01`))
   const addressMainnetCanonical = network.coerceMainnetAddress(
     getPrivateKeyAddress(network, canonicalPrivateKey(privateKey)))
 
-  return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(privateKey))
+  let associationToken
+  if (ownerPrivateKey) {
+    associationToken = makeAssociationToken(privateKey, ownerPrivateKey)
+  }
+
+  return blockstack.connectToGaiaHub(gaiaHubUrl, canonicalPrivateKey(privateKey), associationToken)
     .then((hubConfig) => {
       // ensure that hubConfig always has a mainnet address, even if we're in testnet
       if (network.coerceMainnetAddress(hubConfig.address) === addressMainnet) {
