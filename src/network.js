@@ -372,18 +372,9 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     })
   }
 
-  getNameHistory(name: string, 
-                 startHeight: number | null, 
-                 endHeight: number | null) : Promise<*> {
-
+  getNameHistory(name: string, page: number) : Promise<*> { 
     // TODO: send to blockstack.js 
-    let url = `${this.blockstackAPIUrl}/v1/names/${name}/history`
-    if (!!startHeight) {
-      url += `?start_block=${startHeight}`
-    }
-    if (!!endHeight) {
-      url += `&end_block=${endHeight}`
-    }
+    const url = `${this.blockstackAPIUrl}/v1/names/${name}/history?page=${page}`
     return fetch(url)
       .then((resp) => {
         if (resp.status !== 200) {
@@ -441,12 +432,9 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
   }
 
   getAccountHistoryPage(address: string,
-                        startBlockHeight: number,
-                        endBlockHeight: number,
                         page: number) : Promise<*> {
     // TODO: send to blockstack.js 
-    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?` +
-                          `startblock=${startBlockHeight}&endblock=${endBlockHeight}&page=${page}`
+    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?page=${page}`;
     return fetch(url)
       .then(resp => {
         if (resp.status === 404) {
@@ -510,7 +498,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         if (tokenList.error) {
           throw new Error(`Unable to get token list: ${tokenList.error}`)
         }
-
         return tokenList
       })
   }
