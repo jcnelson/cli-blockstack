@@ -531,7 +531,7 @@ const CLI_ARGS = {
       '\n' +
       'Example:\n' +
       '\n' +
-      '    $ export BACKUP_PHRASE="section amount spend resemble spray verify night immune tattoo best emotion parrot\n' +
+      '    $ export BACKUP_PHRASE="section amount spend resemble spray verify night immune tattoo best emotion parrot"\n' +
       '    $ blockstack-cli gaia_restore_bucket hello.id.blockstack https://sample.app https://new.gaia.hub "$BACKUP_PHRASE" ./backups\n' +
       '    Uploaded ./backups/hello_world to https://new.gaia.hub/hub/1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc/hello_world\n' +
       '    Uploaded ./backups/dir\\x2fformat to https://new.gaia.hub/hub/1Lr8ggSgdmfcb4764woYutUfFqQMjEoKHc/dir/format\n' +
