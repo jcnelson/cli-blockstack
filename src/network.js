@@ -79,24 +79,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     return bitcoin.address.toBase58Check(addressHash, newVersion)
   }
 
-  coerceAddress(address: string) : string {
-    // TODO: move to blockstack.js
-    const addrInfo = bitcoin.address.fromBase58Check(address)
-    const addrHash = addrInfo.hash
-    if (addrInfo.version === bitcoin.networks.bitcoin.pubKeyHash ||
-        addrInfo.version === bitcoin.networks.testnet.pubKeyHash) {
-      // p2pkh address
-      return bitcoin.address.toBase58Check(addrHash, this.layer1.pubKeyHash)
-    } else if (addrInfo.version === bitcoin.networks.bitcoin.scriptHash ||
-            addrInfo.version === bitcoin.networks.testnet.scriptHash) {
-      // p2sh address
-      return bitcoin.address.toBase58Check(addrHash, this.layer1.scriptHash)
-    }
-    else {
-      throw new Error(`Unknown address version of ${address}`)
-    }
-  }
-
   getFeeRate() : Promise<number> {
     if (this.feeRate) {
       // override with CLI option
@@ -124,93 +106,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
     return super.getGracePeriod()
   }
 
-  getNamePriceV1(fullyQualifiedName: string) : Promise<*> {
-    // legacy code path
-    return fetch(`${this.blockstackAPIUrl}/v1/prices/names/${fullyQualifiedName}`)
-      .then(resp => resp.json())
-      .then(resp => resp.name_price)
-      .then(namePrice => {
-        if (!namePrice || !namePrice.satoshis) {
-          throw new Error(
-            `Failed to get price for ${fullyQualifiedName}. Does the namespace exist?`)
-        }
-        const result = {
-          units: 'BTC',
-          amount: bigi.fromByteArrayUnsigned(String(namePrice.satoshis))
-        }
-        return result
-      })
-  }
-
-  getNamespacePriceV1(namespaceID: string) : Promise<*> {
-    return fetch(`${this.blockstackAPIUrl}/v1/prices/namespaces/${namespaceID}`)
-      .then(resp => resp.json())
-      .then(namespacePrice => {
-        if (!namespacePrice || !namespacePrice.satoshis) {
-          throw new Error(`Failed to get price for ${namespaceID}`)
-        }
-        const result = {
-          units: 'BTC',
-          amount: bigi.fromByteArrayUnsigned(String(namespacePrice.satoshis))
-        }
-        return result
-      })
-  }
-
-  getNamePriceV2(fullyQualifiedName: string) : Promise<*> {
-    return super.getNamePrice(fullyQualifiedName)
-      .then((namePrice) => {
-        // might be a number, in which case, this is BTC 
-        if (typeof namePrice === 'number') {
-          const result = {
-            units: 'BTC',
-            amount: bigi.fromByteArrayUnsigned(String(namePrice))
-          };
-          return result;
-        }
-        else {
-          return namePrice;
-        }
-      });
-  }
-
-  getNamespacePriceV2(namespaceID: string) : Promise<*> {
-    return super.getNamespacePrice(namespaceID)
-      .then((namespacePrice) => {
-        // might be a number, in which case, this is BTC 
-        if (typeof namespacePrice === 'number') {
-          const result = {
-            units: 'BTC',
-            amount: bigi.fromByteArrayUnsigned(String(namespacePrice))
-          };
-          return result;
-        }
-        else {
-          return namespacePrice;
-        }
-      });
-  }
-
-  getNamePriceCompat(fullyQualifiedName: string) : Promise<*> {
-    // handle v1 or v2 
-    return Promise.resolve().then(() => {
-      return this.getNamePriceV2(fullyQualifiedName)
-    })
-    .catch(() => {
-      return this.getNamePriceV1(fullyQualifiedName)
-    })
-  }
-
-  getNamespacePriceCompat(namespaceID: string) : Promise<*> {
-    // handle v1 or v2 
-    return Promise.resolve().then(() => {
-      return this.getNamespacePriceV2(namespaceID)
-    })
-    .catch(() => {
-      return this.getNamespacePriceV1(namespaceID)
-    })
-  }
-
   getNamePrice(name: string) {
     // override with CLI option 
     if (this.priceUnits && this.priceToPay) {
@@ -219,7 +114,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
       }))
     }
-    return this.getNamePriceCompat(name)
+    return super.getNamePrice(name)
   }
 
   getNamespacePrice(namespaceID: string) {
@@ -230,7 +125,7 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         amount: bigi.fromByteArrayUnsigned(String(this.priceToPay))
       }))
     }
-    return this.getNamespacePriceCompat(namespaceID)
+    return super.getNamespacePrice(namespaceID)
   }
 
   getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
@@ -276,21 +171,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         }
 
         return nameInfo
-      })
-  }
-
-  getZonefile(zonefileHash: string) {
-    // mask 404's by returning null
-    return super.getZonefile(zonefileHash)
-      .then((zonefile) => zonefile)
-      .catch((e) => {
-        if (e.message === 'Bad response status: 404') {
-          // make 404's return null
-          return null
-        }
-        else {
-          throw e
-        }
       })
   }
 
@@ -346,7 +226,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         }
       });
   }
-   
 
   getBlockchainNameRecord(name: string) : Promise<*> {
     // TODO: send to blockstack.js, once we can drop the legacy code path 
@@ -403,129 +282,6 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         return fixedHistory
       })
   }
-
-  getAccountStatus(address: string, tokenType: string) : Promise<*> {
-    // TODO: send to blockstack.js 
-    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/status`)
-      .then(resp => {
-        if (resp.status === 404) {
-          throw new Error('Account not found')
-        } else if (resp.status !== 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
-        } else {
-          return resp.json()
-        }
-      })
-      .then(accountStatus => {
-        if (accountStatus.error) {
-          throw new Error(`Unable to get account status: ${accountStatus}`)
-        }
-
-        // coerce all addresses, and convert credit/debit to biginteger
-        const res = Object.assign({}, accountStatus, {
-          address: this.coerceAddress(accountStatus.address),
-          debit_value: bigi.fromByteArrayUnsigned(String(accountStatus.debit_value)),
-          credit_value: bigi.fromByteArrayUnsigned(String(accountStatus.credit_value))
-        });
-        return res;
-      })
-  }
-
-  getAccountHistoryPage(address: string,
-                        page: number) : Promise<*> {
-    // TODO: send to blockstack.js 
-    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history?page=${page}`;
-    return fetch(url)
-      .then(resp => {
-        if (resp.status === 404) {
-          throw new Error("Account not found")
-        } else if (resp.status != 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
-        } else {
-          return resp.json()
-        }
-      })
-      .then((historyList) => {
-        if (historyList.error) {
-          throw new Error(`Unable to get account history page: ${historyList.error}`)
-        }
-        // coerse all addresses 
-        return historyList.map((histEntry) => {
-          histEntry.address = this.coerceAddress(histEntry.address)
-          return histEntry
-        })
-      })
-  }
-
-  getAccountAt(address: string, blockHeight: number) : Promise<*> {
-    // TODO: send to blockstack.js 
-    const url = `${this.blockstackAPIUrl}/v1/accounts/${address}/history/${blockHeight}`
-    return fetch(url)
-      .then(resp => {
-        if (resp.status === 404) {
-          throw new Error("Account not found")
-        } else if (resp.status != 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
-        } else {
-          return resp.json()
-        }
-      })
-      .then((historyList) => {
-        if (historyList.error) {
-          throw new Error(`Unable to get historic account state: ${historyList.error}`)
-        }
-        // coerce all addresses 
-        return historyList.map((histEntry) => {
-          histEntry.address = this.coerceAddress(histEntry.address)
-          return histEntry
-        })
-      })
-  }
-
-  getAccountTokens(address: string) : Promise<*> {
-    // TODO: send to blockstack.js 
-    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/tokens`)
-      .then(resp => {
-        if (resp.status === 404) {
-          throw new Error("Account not found")
-        } else if (resp.status != 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
-        } else {
-          return resp.json()
-        }
-      })
-      .then((tokenList) => {
-        if (tokenList.error) {
-          throw new Error(`Unable to get token list: ${tokenList.error}`)
-        }
-        return tokenList
-      })
-  }
-
-  getAccountBalance(address: string, tokenType: string) : Promise<*> {
-    // TODO: send to blockstack.js 
-    return fetch(`${this.blockstackAPIUrl}/v1/accounts/${address}/${tokenType}/balance`)
-      .then(resp => {
-        if (resp.status === 404) {
-          // talking to an older blockstack core node without the accounts API
-          return Promise.resolve().then(() => bigi.fromByteArrayUnsigned('0'))
-        } else if (resp.status != 200) {
-          throw new Error(`Bad response status: ${resp.status}`)
-        } else {
-          return resp.json()
-        }
-      })
-      .then((tokenBalance) => {
-        if (tokenBalance.error) {
-          throw new Error(`Unable to get account balance: ${tokenBalance.error}`)
-        }
-        let balance = '0'
-        if (tokenBalance && tokenBalance.balance) {
-          balance = tokenBalance.balance
-        }
-        return bigi.fromByteArrayUnsigned(balance)
-      })
-    }
 }
 
 /*
