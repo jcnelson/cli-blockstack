@@ -486,8 +486,7 @@ export function nameLookup(network: Object, name: string, includeProfile?: boole
       }
     }
     catch(e) {
-      logger.error(e);
-      throw e;
+      profile = null;
     }
 
     const ret = {
