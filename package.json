@@ -96,7 +96,7 @@
     "bigi": "^1.4.2",
     "bip39": "^2.5.0",
     "bitcoinjs-lib": "^4",
-    "blockstack": "^18.0.0",
+    "blockstack": "^18.0.4",
     "blockstack-keychains": "^0.0.8",
     "c32check": "^0.0.6",
     "cors": "^2.8.4",
