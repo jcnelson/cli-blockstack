@@ -7,10 +7,29 @@ any!
 
 ## How to Install
 
-1. Install the `feature/stacks-transactions` branch of
-   [blockstack.js](https://github.com/blockstack/blockstack.js).
+You need to install the `feature/stacks-transactions` branch of 
+[blockstack.js](https://github.com/blockstack/blockstack.js).  For some
+Gaia methods, you will need `feature/stacks-transactions-authResponse-1.3`.
 
-2. Run `npm run build && sudo npm install` (or `sudo npm link`).
+```
+$ git clone https://github.com/blockstack/blockstack.js
+$ cd blockstack.js
+$ git checkout feature/stacks-transactions # or feature/stacks-transactions-authResponse-1.3
+$ npm install
+$ sudo npm link
+```
+
+Once this branch of blockstack.js is globally linked, you can install this CLI
+tool.
+
+```
+$ git clone https://github.com/jcnelson/cli-blockstack
+$ cd cli-blockstack
+$ npm install
+$ npm link blockstack
+$ npm run build
+$ sudo npm install -g
+```
 
 ## How to Use
 
