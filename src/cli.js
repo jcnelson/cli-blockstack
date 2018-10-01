@@ -2667,7 +2667,8 @@ function gaiaPutFile(network: Object, args: Array<string>) {
   const hubUrl = args[0];
   const appPrivateKey = args[1];
   const dataPath = args[2];
-  const gaiaPath = args[3].replace(/^\/+/, '');
+  const gaiaPath = path.normalize(args[3].replace(/^\/+/, ''));
+
   let encrypt = false;
   let sign = false;
   
