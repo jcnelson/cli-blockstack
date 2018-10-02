@@ -2390,7 +2390,13 @@ function getAccountHistory(network: Object, args: Array<string>) {
         })
     }
 
-    return getAllHistoryPages(0);
+    return getAllHistoryPages(0)
+      .then(accountStates => accountStates.map((s) => {
+        s.address = c32check.b58ToC32(s.address);
+        s.credit_value = s.credit_value.toString();
+        s.debit_value = s.debit_value.toString();
+        return s;
+      }))
   }
 }
 
@@ -2407,6 +2413,12 @@ function getAccountAt(network: Object, args: Array<string>) {
   return Promise.resolve().then(() => {
     return network.getAccountAt(address, blockHeight);
   })
+  .then(accountStates => accountStates.map((s) => {
+    s.address = c32check.b58ToC32(s.address);
+    s.credit_value = s.credit_value.toString();
+    s.debit_value = s.debit_value.toString();
+    return s;
+  }))
   .then(history => JSONStringify(history));
 }
 
@@ -2667,7 +2679,7 @@ function gaiaPutFile(network: Object, args: Array<string>) {
   const hubUrl = args[0];
   const appPrivateKey = args[1];
   const dataPath = args[2];
-  const gaiaPath = path.normalize(args[3].replace(/^\/+/, ''));
+  const gaiaPath = pathTools.normalize(args[3].replace(/^\/+/, ''));
 
   let encrypt = false;
   let sign = false;
