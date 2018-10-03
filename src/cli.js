@@ -1691,7 +1691,7 @@ function announce(network: Object, args: Array<string>) {
  */
 function register(network: Object, args: Array<string>) {
   const name = args[0];
-  const ownerKey = decodePrivateKey(args[1]);
+  const ownerKey = args[1];
   const paymentKey = decodePrivateKey(args[2]);
   const gaiaHubUrl = args[3];
 
@@ -1786,7 +1786,7 @@ function register(network: Object, args: Array<string>) {
     broadcastResult = txResult;
     const signedProfileData = makeProfileJWT(emptyProfile, ownerKey);
     return gaiaUploadProfileAll(
-      network, [gaiaHubUrl], 'profile.json', signedProfileData, ownerKey);
+      network, [gaiaHubUrl], signedProfileData, ownerKey);
   })
   .then((gaiaUrls) => {
     if (gaiaUrls.hasOwnProperty('error')) {
@@ -2369,34 +2369,37 @@ function getAccountHistory(network: Object, args: Array<string>) {
     return Promise.resolve().then(() => {
       return network.getAccountHistoryPage(address, page);
     })
-    .then((nameHistory) => {
-      return JSONStringify(nameHistory);
-    });
+    .then(accountStates => JSONStringify(accountStates.map((s) => {
+      s.address = c32check.b58ToC32(s.address);
+      s.credit_value = s.credit_value.toString();
+      s.debit_value = s.debit_value.toString();
+      return s;
+    })));
   }
   else {
     // all pages 
-    let history = {};
+    let history = [];
     
     function getAllHistoryPages(page: number) {
       return network.getAccountHistoryPage(address, page)
         .then((results) => {
           if (Object.keys(results).length == 0) {
-            return JSONStringify(history);
+            return history;
           }
           else {
-            history = Object.assign(history, results);
+            history = history.concat(results);
             return getAllHistoryPages(page + 1);
           }
         })
     }
 
     return getAllHistoryPages(0)
-      .then(accountStates => accountStates.map((s) => {
+      .then(accountStates => JSONStringify(accountStates.map((s) => {
         s.address = c32check.b58ToC32(s.address);
         s.credit_value = s.credit_value.toString();
         s.debit_value = s.debit_value.toString();
         return s;
-      }))
+      })));
   }
 }
 
