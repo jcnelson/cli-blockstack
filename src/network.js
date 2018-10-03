@@ -115,6 +115,16 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       }))
     }
     return super.getNamePrice(name)
+      .then((priceInfo) => {
+        // use v2 scheme
+        if (!priceInfo.units) {
+          priceInfo = {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(priceInfo))
+          }
+        }
+        return priceInfo;
+      })
   }
 
   getNamespacePrice(namespaceID: string) {
@@ -126,6 +136,16 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
       }))
     }
     return super.getNamespacePrice(namespaceID)
+      .then((priceInfo) => {
+        // use v2 scheme
+        if (!priceInfo.units) {
+          priceInfo = {
+            units: 'BTC',
+            amount: bigi.fromByteArrayUnsigned(String(priceInfo))
+          }
+        }
+        return priceInfo;
+      })
   }
 
   getNamespaceBurnAddress(namespace: string, useCLI: ?boolean = true) {
@@ -281,6 +301,48 @@ export class CLINetworkAdapter extends blockstack.network.BlockstackNetwork {
         }
         return fixedHistory
       })
+  }
+
+  // stub out accounts 
+  getAccountStatus(address: string) : Promise<*> {
+    if (!super.getAccountStatus) {
+      throw new Error('Getting an account status is not yet implemented in blockstack.js');
+    }
+    return super.getAccountStatus(address);
+  }
+
+  // stub out accounts 
+  getAccountHistoryPage(address: string, page: number): Promise<*> {
+    if (!super.getAccountHistoryPage) {
+      return Promise.resolve().then(() => []);
+    }
+    return super.getAccountHistoryPage(address, page);
+  }
+
+  // stub out accounts 
+  getAccountBalance(address: string, tokenType: string): Promise<*> {
+    if (!super.getAccountBalance) {
+      return Promise.resolve().then(() => bigi.fromByteArrayUnsigned('0'));
+    }
+    return super.getAccountBalance(address, tokenType);
+  }
+
+  // stub out accounts 
+  getAccountAt(address: string, blockHeight: number): Promise<*> {
+    if (!super.getAccountAt) {
+      return Promise.resolve().then(() => []);
+    }
+    return super.getAccountAt(address, blockHeight);
+  }
+
+  // stub out accounts 
+  getAccountTokens(address: string): Promise<*> {
+    if (!super.getAccountTokens) {
+      return Promise.resolve().then(() => {
+        return { tokens: [] };
+      });
+    }
+    return super.getAccountTokens(address);
   }
 }
 
