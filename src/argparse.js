@@ -2451,7 +2451,7 @@ export function makeCommandUsageString(command: string) : string {
   res += `${cmdFormat.raw}\n`;
   res += `${cmdFormat.kw}\n`;
   res += formattedHelp;
-  return res;
+  return res.trim() + '\n';
 }
 
 /*
