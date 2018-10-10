@@ -260,6 +260,9 @@ function getNameHistoryRecord(network: Object, args: Array<string>) {
             return getAllHistoryPages(page + 1);
           }
         })
+        .catch((e) => {
+          return JSONStringify(history);
+        })
     }
 
     return getAllHistoryPages(0);
@@ -290,16 +293,13 @@ function getNamespaceBlockchainRecord(network: Object, args: Array<string>) {
 }
 
 /*
- * Get a name's zone file
+ * Get a zone file by hash.
  * args:
- * @name (string) the name to query
+ * @zonefile_hash (string) the hash of the zone file to query
  */
-function getNameZonefile(network: Object, args: Array<string>) {
-  const name = args[0];
-  return Promise.resolve().then(() => {
-      return network.getNameInfo(name)
-    })
-    .then(nameInfo => nameInfo.zonefile);
+function getZonefile(network: Object, args: Array<string>) {
+  const zonefileHash = args[0];
+  return network.getZonefile(zonefileHash)
 }
 
 /*
@@ -3245,7 +3245,7 @@ const COMMANDS = {
   'get_app_keys': getAppKeys,
   'get_owner_keys': getOwnerKeys,
   'get_payment_key': getPaymentKey,
-  'get_zonefile': getNameZonefile,
+  'get_zonefile': getZonefile,
   'lookup': lookup,
   'make_keychain': makeKeychain,
   'make_zonefile': makeZonefile,
