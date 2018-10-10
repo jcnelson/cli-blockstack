@@ -998,15 +998,15 @@ const CLI_ARGS = {
       type: "array",
       items: [
         {
-          name: 'blockstack_id',
+          name: 'zonefile_hash',
           type: "string",
-          realtype: 'blockstack_id',
-          pattern: `${NAME_PATTERN}|${SUBDOMAIN_PATTERN}$`,
+          realtype: 'zonefile_hash',
+          pattern: ZONEFILE_HASH_PATTERN
         },
       ],
       minItems: 1,
       maxItems: 1,
-      help: 'Get the current zone file for a Blockstack ID',
+      help: 'Get a zone file by hash',
       group: 'Peer Services',
     },
     help: {
